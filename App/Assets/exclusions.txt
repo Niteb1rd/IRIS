@@ -1,0 +1,77 @@
+# IRIS exclusion list: one name per line, case-insensitive
+# These names are not treated as players, your players list overrides this list
+# Please submit erroneous names to DISCORD
+
+# Star
+Stanton
+Pyro
+Nyx
+Castra
+# Planet
+Hurston
+MicroTech
+ArcCorp
+Crusader
+# Moon
+Cellin
+Daymar
+Yela
+Lyria
+Wala
+Magda
+Ita
+Arial
+Aberdeen
+Clio
+Calliope
+Euterpe
+Monolith
+Bloom
+Starlight
+Fumarole
+# Animal
+Vanduul
+Xian
+Banu
+Kopion
+Marok
+Stormwal
+# Mineral
+Quantainium
+Bexlite
+Laranite
+Taranite
+Agricium
+Hephaestanite
+Borase
+Diamond
+Gold
+Titanium
+Copper
+Corundum
+Quartz
+Aluminum
+Beryl
+Amethyst
+Sorensen
+Dolivine
+Ametrin
+Janolite
+Hadalite
+Aphorite
+# Harvestable
+Ranta
+# Plant
+Goldenrod
+Pitibu
+Prostis
+Amby
+# seen in testing
+UNKNOWN
+HOSPICE
+WARLORD
+VIXEN
+AMMUNITION
+DECOY
+NOISE
+SOUVENIRS

@@ -1,0 +1,72 @@
+# IRIS social config (TOML format). Shareable: contains no personal settings.
+format = "sc-social-overlay"
+format_version = 1
+
+[[players]]
+handle = "nitebird"
+color = "Green"
+
+[[orgs]]
+sid = "J0K3R5"
+priority = 3
+color = "Green"
+
+[[orgs]]
+sid = "ASTROMERCS"
+priority = 3
+color = "Green"
+
+[[orgs]]
+sid = "AVOCADO"
+priority = 2
+color = "Yellow"
+
+[[orgs]]
+sid = "GRIEFERNET"
+priority = 2
+color = "Red"
+
+[[org_rules]]
+kind = "archetype"
+value = "Syndicate"
+priority = 1
+color = "Red"
+
+[[org_rules]]
+kind = "activity"
+value = "Piracy"
+priority = 1
+color = "Red"
+
+[[org_rules]]
+kind = "activity"
+value = "Smuggling"
+priority = 3
+color = "Orange"
+
+[[org_rules]]
+kind = "redacted"
+priority = 5
+color = "Orange"
+
+[[org_rules]]
+kind = "no_org"
+priority = 3
+color = "Yellow"
+
+[[org_rules]]
+kind = "activity"
+value = "Security"
+priority = 7
+color = "Orange"
+
+[[org_rules]]
+kind = "activity"
+value = "Bounty Hunting"
+priority = 7
+color = "Orange"
+
+[[org_rules]]
+kind = "no_match"
+priority = 10
+color = "Blue"

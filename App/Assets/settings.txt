@@ -1,0 +1,23 @@
+# IRIS settings for this PC (TOML format). Not part of the shareable list file; never exported.
+format_version = 1
+cache_ttl_days = 30
+session_log_enabled = true
+hosted_config_url = ""
+hosted_config_last_hash = ""
+hosted_config_auto_check = false
+panel_enabled = true
+panel_width_percent = 15
+panel_text_size = 15
+panel_right_gap_percent = 5
+panel_top_gap_percent = 5
+boundary_top = 10
+boundary_bottom = 20
+boundary_left = 10
+boundary_right = 10
+nameplate_tracking_fps = "max"
+overlay_visible_in_capture = false
+hide_capture_border = false
+check_for_updates = false
+overlay_disabled = false
+hotkey_toggle_overlay = "Ctrl+F11"
+hotkey_toggle_panel = "Ctrl+F12"
