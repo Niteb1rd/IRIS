@@ -2,6 +2,8 @@
 
 IRIS reads player nameplates in Star Citizen, looks the names up on RSI, and marks players and orgs from your lists with coloured brackets and a side panel.
 
+To download, click Releases >>> download IRIS-1.0.0.zip >>> Unzip and run IRIS.exe
+
 ## Windows warning
 
 IRIS.exe is not code-signed, so Windows SmartScreen may show "Windows protected your PC". Click More info, then Run anyway. Antivirus tools may also flag the hotkey keyboard hook. To check your download, compare it with the SHA-256 and VirusTotal link on the release page.
