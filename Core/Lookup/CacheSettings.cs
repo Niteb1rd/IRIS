@@ -67,6 +67,21 @@ public sealed class CacheSettings
 
     public const int UpdateCheckMaxBytes = 256 * 1024;
 
+
+    public const string UpdateAssetName = "IRIS-portable.zip";
+
+    public const string UpdateDownloadUrlFormat = "https://github.com/Niteb1rd/IRIS/releases/download/{0}/" + UpdateAssetName;
+
+    public const string UpdateDownloadHost = "github.com";
+
+    public const string UpdateRedirectHostSuffix = ".githubusercontent.com";
+
+    public const int UpdateDownloadMaxRedirects = 3;
+
+    public static readonly TimeSpan UpdateDownloadTimeout = TimeSpan.FromMinutes(5);
+
+    public const long UpdateDownloadMaxBytes = 200L * 1024 * 1024;
+
     private int _ttlDays;
 
     public CacheSettings(int ttlDays = DefaultTtlDays)

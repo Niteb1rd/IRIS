@@ -112,8 +112,6 @@ public sealed partial class AppServices
         }
 
         var changes = new ConfigChanges(listChanged, settingsChanged, exclusionsChanged, errorsChanged, messages);
-        if (changes.Message is { } text)
-            Notify?.Invoke(text);
         if (listChanged)
             ListApplied?.Invoke(this, EventArgs.Empty);
         return changes;

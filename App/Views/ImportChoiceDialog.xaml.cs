@@ -1,4 +1,3 @@
-using System;
 using System.Windows;
 using Iris.Core.Config;
 
@@ -13,9 +12,7 @@ public partial class ImportChoiceDialog : Window
         InitializeComponent();
     }
 
-    public static ImportMode? Ask(
-        Window? owner, SocialConfig imported, bool hasExistingFile, string headline, Action<string>? notify = null,
-        bool userJustActed = false)
+    public static ImportMode? Ask(Window? owner, SocialConfig imported, bool hasExistingFile, string headline, bool userJustActed = false)
     {
         var dialog = new ImportChoiceDialog();
         dialog.HeadlineText.Text = headline;
@@ -30,10 +27,10 @@ public partial class ImportChoiceDialog : Window
         }
         else
         {
-            DialogHelper.PrepareBackgroundDialog(dialog, null, headline, notify, userJustActed);
+            DialogHelper.PrepareBackgroundDialog(dialog, null, userJustActed);
         }
 
-        dialog.ShowDialog();
+        DialogHelper.ShowModal(dialog);
         return dialog._choice;
     }
 

@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Threading;
 using System.Windows.Threading;
 using Iris.Core;
 using Iris.Core.Overlay;
@@ -24,18 +25,21 @@ public sealed class GameWindowTracker : IDisposable
 
     private readonly ILog _log;
     private readonly IClock _clock;
+    private readonly Func<bool> _modeWanted;
+    private bool _paused;
     private readonly DispatcherTimer _timer;
     private readonly Dictionary<uint, (bool IsGame, long CheckedAtMs)> _processCache = new();
     private readonly Dictionary<uint, GameProcessInfo> _gameInfo = new();
 
     private const int GameInfoMaxEntries = 16;
 
-    private readonly Dictionary<string, WindowMode?> _modeByFile = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ModeFile> _files = new(StringComparer.OrdinalIgnoreCase);
 
-    public GameWindowTracker(ILog log, IClock clock)
+    public GameWindowTracker(ILog log, IClock clock, Func<bool> modeWanted)
     {
         _log = log;
         _clock = clock;
+        _modeWanted = modeWanted;
         _timer = new DispatcherTimer { Interval = LiveSettings.GameCheckInterval };
         _timer.Tick += OnTick;
     }
@@ -58,6 +62,9 @@ public sealed class GameWindowTracker : IDisposable
     {
         _timer.Stop();
         _timer.Tick -= OnTick;
+        foreach (var file in _files.Values)
+            file.Dispose();
+        _files.Clear();
     }
 
     private void OnTick(object? sender, EventArgs e)
@@ -98,7 +105,7 @@ public sealed class GameWindowTracker : IDisposable
             return GameWindowSnapshot.None;
 
         var style = NativeMethods.GetStyle(foreground);
-        var mode = ReadGameMode(processId);
+        var mode = ReadGameMode(processId, cameToFront: Current.Handle != foreground);
         var state = GameWindowRules.Decide(true, mode);
         return new GameWindowSnapshot(state, window, (int)processId, foreground, style, monitor, mode);
     }
@@ -133,10 +140,39 @@ public sealed class GameWindowTracker : IDisposable
 
         public string? ExePath { get; }
         public string? AttributesPath { get; set; }
-        public bool Settled { get; set; }
+        public ModeFile? File { get; set; }
+        public bool NoFile { get; set; }
         public int Attempts { get; set; }
         public long RetryAtMs { get; set; }
+    }
+
+    private sealed class ModeFile : IDisposable
+    {
+        private long _changedAtMs = -1;
+
+        public ModeFile(string path) => Path = path;
+
+        public string Path { get; }
         public WindowMode? Mode { get; set; }
+        public FileSystemWatcher? Watcher { get; set; }
+
+        public void MarkChanged() => Interlocked.Exchange(ref _changedAtMs, Environment.TickCount64);
+
+        public void MarkDue() => Interlocked.Exchange(ref _changedAtMs, Environment.TickCount64 - LiveSettings.GameModeFileSettleMs);
+
+        public bool TakeChange(long nowMs)
+        {
+            var at = Interlocked.Read(ref _changedAtMs);
+            if (at < 0 || nowMs - at < LiveSettings.GameModeFileSettleMs)
+                return false;
+            return Interlocked.CompareExchange(ref _changedAtMs, -1, at) == at;
+        }
+
+        public void Dispose()
+        {
+            Watcher?.Dispose();
+            Watcher = null;
+        }
     }
 
     private GameProcessInfo RefreshGameInfo(uint processId)
@@ -153,21 +189,42 @@ public sealed class GameWindowTracker : IDisposable
         return created;
     }
 
-    private WindowMode? ReadGameMode(uint processId)
+    private WindowMode? ReadGameMode(uint processId, bool cameToFront)
     {
         if (!_gameInfo.TryGetValue(processId, out var info))
             info = RefreshGameInfo(processId);
-        if (info.Settled)
-            return info.Mode;
-
+        if (info.NoFile)
+            return WindowMode.Borderless;
+        var wanted = _modeWanted();
+        SetPaused(!wanted);
         var now = Environment.TickCount64;
+        if (info.File is { } known)
+        {
+            if (!wanted)
+                return known.Mode;
+            if (cameToFront)
+                known.MarkDue();
+            if (known.TakeChange(now))
+                Reread(known);
+            return known.Mode;
+        }
+
+        if (!wanted)
+            return null;
         if (info.Attempts == 1 && now < info.RetryAtMs)
             return null;
 
         if (info.AttributesPath is null && info.ExePath is not null)
             info.AttributesPath = StarCitizenDisplaySettings.AttributesPathFor(info.ExePath, File.Exists, FindAttributesCandidates);
-        if (info.AttributesPath is not null && _modeByFile.TryGetValue(info.AttributesPath, out var known))
-            return Settle(info, known);
+        if (info.AttributesPath is not null && _files.TryGetValue(info.AttributesPath, out var shared))
+        {
+            info.File = shared;
+            if (cameToFront)
+                shared.MarkDue();
+            if (shared.TakeChange(now))
+                Reread(shared);
+            return shared.Mode;
+        }
 
         info.Attempts++;
         var text = info.AttributesPath is null ? null : TryReadText(info.AttributesPath);
@@ -176,8 +233,7 @@ public sealed class GameWindowTracker : IDisposable
         {
             _log.Write(_clock.UtcNow, $"Star Citizen display settings file: {info.AttributesPath}");
             _log.Write(_clock.UtcNow, $"Star Citizen display mode: {parsed}");
-            _modeByFile[info.AttributesPath!] = parsed;
-            return Settle(info, parsed);
+            return Track(info, info.AttributesPath!, parsed).Mode;
         }
 
         if (info.Attempts == 1)
@@ -187,16 +243,77 @@ public sealed class GameWindowTracker : IDisposable
         }
 
         _log.Write(_clock.UtcNow, "Failed to open attributes.xml, assuming Borderless mode");
-        if (info.AttributesPath is not null)
-            _modeByFile[info.AttributesPath] = WindowMode.Borderless;
-        return Settle(info, WindowMode.Borderless);
+        if (info.AttributesPath is null)
+        {
+            info.NoFile = true;
+            return WindowMode.Borderless;
+        }
+        return Track(info, info.AttributesPath, WindowMode.Borderless).Mode;
     }
 
-    private static WindowMode? Settle(GameProcessInfo info, WindowMode? mode)
+    private void SetPaused(bool paused)
     {
-        info.Settled = true;
-        info.Mode = mode;
-        return mode;
+        if (paused == _paused)
+            return;
+        _paused = paused;
+        foreach (var file in _files.Values)
+        {
+            if (paused)
+            {
+                file.Dispose();
+                continue;
+            }
+            file.Watcher = CreateWatcher(file);
+            file.MarkDue();
+        }
+    }
+
+    private ModeFile Track(GameProcessInfo info, string path, WindowMode? mode)
+    {
+        var file = new ModeFile(path) { Mode = mode };
+        file.Watcher = CreateWatcher(file);
+        _files[path] = file;
+        info.File = file;
+        return file;
+    }
+
+    private void Reread(ModeFile file)
+    {
+        var parsed = StarCitizenDisplaySettings.ParseWindowMode(TryReadText(file.Path));
+        if (parsed is null)
+        {
+            file.MarkChanged();
+            return;
+        }
+        if (parsed == file.Mode)
+            return;
+        file.Mode = parsed;
+        _log.Write(_clock.UtcNow, $"Star Citizen display mode: {parsed}");
+    }
+
+    private static FileSystemWatcher? CreateWatcher(ModeFile file)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(file.Path);
+            if (string.IsNullOrEmpty(directory))
+                return null;
+            var watcher = new FileSystemWatcher(directory, Path.GetFileName(file.Path))
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName | NotifyFilters.CreationTime,
+                IncludeSubdirectories = false,
+            };
+            watcher.Changed += (_, _) => file.MarkChanged();
+            watcher.Created += (_, _) => file.MarkChanged();
+            watcher.Renamed += (_, _) => file.MarkChanged();
+            watcher.Error += (_, _) => file.MarkChanged();
+            watcher.EnableRaisingEvents = true;
+            return watcher;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return null;
+        }
     }
 
     private static string? TryReadText(string path)

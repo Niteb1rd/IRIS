@@ -50,6 +50,7 @@ public partial class ConfigWindow : Window, IImportHost
     private readonly DispatcherTimer _watchTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private bool _polling;
     private bool _closePromptOpen;
+    private bool _discardOnClose;
     private ConfigPoll? _pendingPoll;
 
     private int _busyCount;
@@ -88,6 +89,8 @@ public partial class ConfigWindow : Window, IImportHost
         LoadRowsFrom(services.CurrentConfig);
         LoadSettingsControls();
         _baseline = Snapshot();
+
+        Tabs.SelectedItem = services.ListFileHasErrors && !services.SettingsFileHasErrors ? PlayersTab : SettingsTab;
 
         imports.Host = this;
         updater.RefreshingChanged += OnRefreshingChanged;

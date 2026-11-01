@@ -57,6 +57,8 @@ public sealed partial class LiveDetectionService : IDisposable
     private long _newestSeenRequestId;
     private string? _lastCaptureProblem;
     private bool _tooSmallLogged;
+    private double _runStartMs;
+    private bool _anyFrameThisRun;
     private int _readerFailures;
     private double _readerRetryAtMs;
     private string? _lastReaderProblem;

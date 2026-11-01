@@ -91,8 +91,7 @@ public sealed class ImportCoordinator
             var read = ConfigImporter.ParseForImport(text);
             if (!read.IsValid || read.Config is null)
             {
-                Tell(owner, "This config cannot be imported. Nothing was changed.\n\n" + BulletList(read.Errors), MessageBoxImage.Warning,
-                    headline, userJustActed);
+                Tell(owner, "This config cannot be imported. Nothing was changed.\n\n" + BulletList(read.Errors), MessageBoxImage.Warning, userJustActed);
                 _services.Log.Write(_services.Clock.UtcNow, ConfigMessages.ImportRejected(read.Errors));
                 return new ImportAttempt(ImportOutcome.Rejected, "Import failed: the config has problems.");
             }
@@ -101,8 +100,8 @@ public sealed class ImportCoordinator
             {
                 var answer = Ask(owner,
                     "The config has some notes:\n\n" + BulletList(read.Warnings) + "\n\nContinue with the import?",
-                    MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No, headline, userJustActed);
-                if (answer != MessageBoxResult.Yes)
+                    MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No, userJustActed);
+                if (answer != MessageBoxResult.Yes || IsQuitting)
                     return new ImportAttempt(ImportOutcome.Cancelled, "Import cancelled.");
             }
 
@@ -113,22 +112,24 @@ public sealed class ImportCoordinator
                     + "Yes: save them, then import.\n"
                     + "No: discard your changes and import.\n"
                     + "Cancel: stop; nothing is imported.",
-                    MessageBoxButton.YesNoCancel, MessageBoxImage.Question, MessageBoxResult.Cancel, headline, userJustActed);
-                if (answer != MessageBoxResult.Yes && answer != MessageBoxResult.No)
+                    MessageBoxButton.YesNoCancel, MessageBoxImage.Question, MessageBoxResult.Cancel, userJustActed);
+                if ((answer != MessageBoxResult.Yes && answer != MessageBoxResult.No) || IsQuitting)
                     return new ImportAttempt(ImportOutcome.Cancelled, "Import cancelled.");
                 if (answer == MessageBoxResult.Yes && !await host.SaveChangesAsync(ignoreHostedUrl))
                     return new ImportAttempt(ImportOutcome.NotSaved, "Import cancelled: your changes were not saved.");
+                if (IsQuitting)
+                    return new ImportAttempt(ImportOutcome.Cancelled, "Import cancelled: IRIS is quitting.");
             }
 
             var hasExisting = File.Exists(_services.Paths.SocialListFile);
-            var mode = ImportChoiceDialog.Ask(owner, read.Config, hasExisting, headline, _services.Notify, userJustActed);
-            if (mode is null)
+            var mode = ImportChoiceDialog.Ask(owner, read.Config, hasExisting, headline, userJustActed);
+            if (mode is null || IsQuitting)
                 return new ImportAttempt(ImportOutcome.Cancelled, "Import cancelled.");
 
             var result = _services.ApplyImport(read.Config, mode.Value);
             if (!result.Success)
             {
-                Tell(owner, "The config was not imported. Nothing was changed.\n\n" + result.Error, MessageBoxImage.Error, headline, userJustActed);
+                Tell(owner, "The config was not imported. Nothing was changed.\n\n" + result.Error, MessageBoxImage.Error, userJustActed);
                 return new ImportAttempt(ImportOutcome.WriteFailed, "Import failed: " + result.Error);
             }
 
@@ -152,12 +153,11 @@ public sealed class ImportCoordinator
         return text.ToString().TrimEnd();
     }
 
-    private void Tell(Window? owner, string text, MessageBoxImage icon, string balloonText, bool userJustActed) =>
-        Ask(owner, text, MessageBoxButton.OK, icon, MessageBoxResult.OK, balloonText, userJustActed);
+    private static void Tell(Window? owner, string text, MessageBoxImage icon, bool userJustActed) =>
+        Ask(owner, text, MessageBoxButton.OK, icon, MessageBoxResult.OK, userJustActed);
 
-    private MessageBoxResult Ask(
-        Window? owner, string text, MessageBoxButton buttons, MessageBoxImage icon, MessageBoxResult defaultResult,
-        string balloonText, bool userJustActed)
+    private static MessageBoxResult Ask(
+        Window? owner, string text, MessageBoxButton buttons, MessageBoxImage icon, MessageBoxResult defaultResult, bool userJustActed)
     {
         if (owner is not null && DialogHelper.PrepareOwner(owner))
             return MessageBox.Show(owner, text, "IRIS", buttons, icon, defaultResult);
@@ -165,11 +165,10 @@ public sealed class ImportCoordinator
         switch (buttons)
         {
             case MessageBoxButton.OK:
-                PromptDialog.Tell(text, balloonText, _services.Notify, owner: null, userJustActed: userJustActed);
+                PromptDialog.Tell(text, owner: null, userJustActed: userJustActed);
                 return MessageBoxResult.OK;
             case MessageBoxButton.YesNo:
-                return PromptDialog.Ask(
-                    text, balloonText, _services.Notify, owner: null, defaultYes: defaultResult == MessageBoxResult.Yes, userJustActed: userJustActed)
+                return PromptDialog.Ask(text, owner: null, defaultYes: defaultResult == MessageBoxResult.Yes, userJustActed: userJustActed)
                     ? MessageBoxResult.Yes
                     : MessageBoxResult.No;
             default:

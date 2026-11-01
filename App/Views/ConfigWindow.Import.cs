@@ -104,7 +104,6 @@ public partial class ConfigWindow
             {
                 const string unchanged = ConfigMessages.HostedConfigUnchanged;
                 _services.Log.Write(_services.Clock.UtcNow, "Hosted config unchanged since the last import.");
-                _services.Notify?.Invoke(unchanged);
                 if (!_isClosed)
                     SetFooter(unchanged);
                 return;

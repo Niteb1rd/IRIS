@@ -52,6 +52,10 @@ public sealed record LiveSettings
 
     public const int TooSmallPauseMs = 100;
 
+    public const double BlankFrameMaxValue = 16;
+
+    public const long FirstFrameTimeoutMs = 5000;
+
     public const int FramePoolSize = 8;
 
     public const int CaptureAcquireTimeoutMs = 50;
@@ -89,4 +93,6 @@ public sealed record LiveSettings
     public const long GameProcessCacheMs = 60_000;
 
     public const long OtherProcessCacheMs = 5_000;
+
+    public const long GameModeFileSettleMs = 500;
 }

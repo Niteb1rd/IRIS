@@ -136,10 +136,15 @@ public sealed class RsiClient : IRsiClient
         LogOutcome(HttpMethod.Post, url, RsiStatus.Found, null,
             $"{sid}: {members} members, {pages} page{(pages == 1 ? "" : "s")}" + (retries > 0 ? $", {retries} retr{(retries == 1 ? "y" : "ies")}" : ""), elapsed);
 
+    public Action<RsiStatus, string?>? AnswerObserved { get; set; }
+
     private void Finish(HttpMethod method, Response response, RsiStatus status, string? reason, string? note)
     {
         if (!response.Paused)
+        {
             LogOutcome(method, response.Url, status, reason, note, response.Elapsed);
+            AnswerObserved?.Invoke(status, reason);
+        }
         NoteAnswer(response);
         NoteBreaker(response, status);
     }

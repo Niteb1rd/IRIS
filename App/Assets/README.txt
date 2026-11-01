@@ -1,23 +1,24 @@
 # IRIS
 
-IRIS reads player nameplates in Star Citizen, looks the names up on RSI, and marks players and orgs from your lists with coloured brackets and a side panel.
+IRIS reads player nameplates in Star Citizen, looks the names up on RSI, and marks players and orgs from your lists with coloured brackets and a side panel. Borderless mode is required.
 
 ## Windows warning
 
-IRIS.exe is not code-signed, so Windows SmartScreen may show "Windows protected your PC". Click More info, then Run anyway. Antivirus tools may also flag the hotkey keyboard hook. To check your download, compare it with the SHA-256 and VirusTotal link on the release page.
+IRIS.exe is not code-signed, so Windows SmartScreen may show "Windows protected your PC". Click More info, then Run anyway.
 
 ## Quick start
 
-1. Unzip to IRIS folder.
-2. Run IRIS.exe. If Windows asks to install the .NET 8 Desktop Runtime, accept.
-3. Check Star Citizen is set to Borderless (Sorry other modes do not work).
-4. Right-click the IRIS tray icon, choose Settings, and add players and orgs.
-5. Press Show Test Overlay to check the panel and boundary, then Save.
+1. Run IRIS-installer.exe, or unzip IRIS-portable.zip to an IRIS folder.
+2. Run IRIS.exe. The first time Windows may ask to install the Microsoft .NET, accept.
+3. Windows 11 may ask once to allow IRIS to hide the yellow capture border.
+4. Set Star Citizen Window Mode to Borderless (Sorry other modes do not work).
+5. Right-click the IRIS tray icon, choose Settings, and add players and orgs.
+6. Press Show Test Overlay to check and resize the panel and boundary, then Save.
 
 ## Requirements
 
-- Windows 10 version 2004 or later. Windows 11 is needed to hide the yellow capture border.
-- .NET 8 Desktop Runtime (Windows offers it on first start).
+- Windows 10 version 2004 or later. Windows 11 to hide yellow video capture border
+- Microsoft .NET 8
 - Star Citizen in Borderless mode.
 
 ## How it works
@@ -38,13 +39,21 @@ Toggle the overlay or the info panel with Ctrl, Alt and Shift combinations. IRIS
 
 - robertsspaceindustries.com: name lookups.
 - Your hosted config URL, only if you set one.
-- api.github.com: update check, only if turned on (off by default).
+- If auto-updating: api.github.com. github.com, *.githubusercontent.com
 
 Nothing else is sent anywhere.
 
 ## Updating
 
-Download the new zip. Copy new IRIS.exe and \Data folder to your current folder. This keeps your configs and cache.
+With "Check for updates" on, IRIS asks at start when a new version is out and can update itself; it restarts when done.
+
+By hand: run the new IRIS-installer.exe, or download IRIS-portable.zip and copy its IRIS.exe and \Data folder to your current folder. Both keep your configs and cache.
+
+## Uninstall
+
+Installed: Windows Settings > Apps > IRIS > Uninstall. This removes IRIS and all its files, including your lists and settings; export your lists first if you want to keep them.
+
+Portable: quit IRIS and delete its folder.
 
 ## Help
 

@@ -50,7 +50,7 @@ public sealed class OverlayController : IDisposable
     {
         _services = services;
         _imports = imports;
-        _tracker = new GameWindowTracker(services.Log, services.Clock);
+        _tracker = new GameWindowTracker(services.Log, services.Clock, () => !services.IsOverlayDisabled);
         _tracker.Changed += OnGameWindowChanged;
         _tracker.Checked += OnGameWindowChecked;
         _testTimer.Tick += OnTestTick;
@@ -173,7 +173,7 @@ public sealed class OverlayController : IDisposable
             if (!saved.Success)
             {
                 ClearToast();
-                _services.Notify?.Invoke("Could not save the setting: " + saved.Error);
+                _services.Log.Write(_services.Clock.UtcNow, "Could not save the setting: " + saved.Error);
                 return;
             }
         }
@@ -187,13 +187,11 @@ public sealed class OverlayController : IDisposable
             if (!saved.Success)
             {
                 ClearToast();
-                _services.Notify?.Invoke("Could not save the setting: " + saved.Error);
+                _services.Log.Write(_services.Clock.UtcNow, "Could not save the setting: " + saved.Error);
                 return;
             }
         }
 
-        if (announce && _toastText is null)
-            _services.Notify?.Invoke(text);
         Evaluate();
     }
 
@@ -288,7 +286,7 @@ public sealed class OverlayController : IDisposable
     {
         _notice.MarkShown();
         _services.Log.Write(_services.Clock.UtcNow, "Told the user that Star Citizen is not in borderless windowed mode (game display mode: " + (gameMode?.ToString() ?? "unknown") + ")");
-        PromptDialog.ShowNotice(BorderlessNoticeTracker.TextFor(gameMode));
+        PromptDialog.ShowNotice(BorderlessNoticeTracker.Text);
     }
 
     public void CloseBorderlessNotice() => PromptDialog.CloseNotice();
@@ -385,7 +383,7 @@ public sealed class OverlayController : IDisposable
     private OverlayWindow EnsureTestWindow() => _testWindow ??= new OverlayWindow(OverlayLayer.All, WarnWindow, _services.Settings.OverlayVisibleInCapture);
 
     private BracketRenderer EnsureBracketRenderer() =>
-        _bracketRenderer ??= new BracketRenderer(RenderModel, WarnWindow, _services.Settings.OverlayVisibleInCapture);
+        _bracketRenderer ??= new BracketRenderer(RenderModel, WarnWindow, _services.Settings.OverlayVisibleInCapture, _services.Milestones.BracketDrawn);
 
     private OverlayWindow EnsurePanelWindow() => _panelWindow ??= new OverlayWindow(OverlayLayer.Panel, WarnWindow, _services.Settings.OverlayVisibleInCapture);
 

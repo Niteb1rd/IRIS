@@ -180,7 +180,7 @@ public partial class ConfigWindow
     {
         if (OverlayVisibleInCaptureCheck.IsChecked != true)
             return;
-        PromptDialog.Tell(RecordingTip, balloonText: string.Empty, notify: null, owner: this, userJustActed: true, okText: "Close");
+        PromptDialog.Tell(RecordingTip, owner: this, userJustActed: true, okText: "Close");
     }
 
     private void OnTestOverlay(object sender, RoutedEventArgs e)
@@ -268,12 +268,9 @@ public partial class ConfigWindow
 
         SetFooter("Refreshing the cache… this takes a long time (about one request per second, slower if RSI asks us to wait).");
         var message = await _updater.RunFullRefreshAsync();
-        if (message is null)
+        if (message is null || _isClosed)
             return;
-        if (_isClosed)
-            _services.Notify?.Invoke(message);
-        else
-            SetFooter(message);
+        SetFooter(message);
     }
 
     private void OnRefreshingChanged(object? sender, EventArgs e)

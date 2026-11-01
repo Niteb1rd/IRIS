@@ -28,13 +28,5 @@ public sealed class BorderlessNoticeTracker
 
     public void MarkShown() => WasShown = true;
 
-    public const string Text =
-        "Star Citizen is not in borderless windowed mode, so the IRIS overlay is turned off. Switch to Borderless in the game's graphics settings.";
-
-    public static string TextFor(WindowMode? gameMode) => gameMode switch
-    {
-        WindowMode.Fullscreen => "Star Citizen is in Fullscreen mode, so the IRIS overlay is turned off. Switch Display Mode to Borderless Windowed in the game's graphics settings.",
-        WindowMode.Windowed => "Star Citizen is in Windowed mode, so the IRIS overlay is turned off. Switch Display Mode to Borderless Windowed in the game's graphics settings.",
-        _ => Text,
-    };
+    public const string Text = "IRIS requires Borderless mode to function. Change in Options > Graphics > Window Mode.";
 }

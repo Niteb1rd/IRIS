@@ -43,11 +43,14 @@ internal sealed class BracketRenderer : IDisposable
     private byte[] _pixels = Array.Empty<byte>();
     private readonly List<PixelRect> _parts = new();
     private string? _loopProblem;
+    private readonly Action _firstBracketDrawn;
+    private bool _bracketDrawn;
 
-    public BracketRenderer(Func<OverlayModel, double, OverlayModel> modelProvider, Action<string> warn, bool visibleInCapture)
+    public BracketRenderer(Func<OverlayModel, double, OverlayModel> modelProvider, Action<string> warn, bool visibleInCapture, Action firstBracketDrawn)
     {
         _modelProvider = modelProvider;
         _warn = warn;
+        _firstBracketDrawn = firstBracketDrawn;
         _visibleInCapture = visibleInCapture;
         _target = new Target(false, default, IntPtr.Zero, null, visibleInCapture);
     }
@@ -332,6 +335,11 @@ internal sealed class BracketRenderer : IDisposable
             window.Show();
         if (firstShow || boundsChanged || fitChanged)
             window.AssertTopmost();
+        if (!_bracketDrawn && model.Brackets.Count > 0)
+        {
+            _bracketDrawn = true;
+            _firstBracketDrawn();
+        }
     }
 
     private bool IsShown => _window is { IsShown: true };

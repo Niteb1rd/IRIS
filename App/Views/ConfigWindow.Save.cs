@@ -304,8 +304,12 @@ public partial class ConfigWindow
         Close();
     }
 
+    public void DiscardOnClose() => _discardOnClose = true;
+
     private void OnWindowClosing(object? sender, CancelEventArgs e)
     {
+        if (_discardOnClose)
+            return;
         if (_busyCount > 0)
         {
             e.Cancel = true;

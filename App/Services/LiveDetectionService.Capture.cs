@@ -151,6 +151,8 @@ public sealed partial class LiveDetectionService
         _lastCaptureProblem = null;
         _tooSmallLogged = false;
         _environment = null;
+        _runStartMs = now;
+        _anyFrameThisRun = false;
         _running = true;
         var bounds = gate.Bounds;
         var cap = TrackingCapFps();
@@ -201,6 +203,7 @@ public sealed partial class LiveDetectionService
         {
             case FrameWait.NewFrame:
             {
+                _anyFrameThisRun = true;
                 var frameMs = Math.Max(arrival.FrameMs, _lastFrameMs);
                 _lastFrameMs = frameMs;
                 _stats?.AddGameFrame(frameMs);
@@ -222,6 +225,7 @@ public sealed partial class LiveDetectionService
 
             case FrameWait.Unchanged:
                 UpdateLateNote(arrivedAt, false);
+                NoteNoFrameYet(arrivedAt);
                 return 0;
 
             default:
@@ -231,10 +235,18 @@ public sealed partial class LiveDetectionService
                 {
                     _lastCaptureProblem = message;
                     Log("Live detection: window capture unavailable (" + message + ")");
+                    _services.Milestones.CaptureFailed(message);
                 }
+                NoteNoFrameYet(arrivedAt);
 
                 return LiveSettings.CaptureUnavailablePauseMs;
         }
+    }
+
+    private void NoteNoFrameYet(double now)
+    {
+        if (!_anyFrameThisRun && now - _runStartMs > LiveSettings.FirstFrameTimeoutMs)
+            _services.Milestones.CaptureFailed($"no picture from the game window within {LiveSettings.FirstFrameTimeoutMs / 1000} s");
     }
 
     private void UpdateLateNote(double now, bool late)
@@ -318,6 +330,7 @@ public sealed partial class LiveDetectionService
                 {
                     _lastCaptureProblem = message;
                     Log("Live detection: window capture unavailable (" + message + ")");
+                    _services.Milestones.CaptureFailed(message);
                 }
 
                 return;
@@ -358,6 +371,19 @@ public sealed partial class LiveDetectionService
         }
     }
 
+    private static double BrightestColourValue(Mat image)
+    {
+        var max = 0.0;
+        using var channel = new Mat();
+        for (var i = 0; i < Math.Min(3, image.Channels()); i++)
+        {
+            Cv2.ExtractChannel(image, channel, i);
+            Cv2.MinMaxLoc(channel, out double _, out double value);
+            max = Math.Max(max, value);
+        }
+        return max;
+    }
+
     private void FinishScanRead(WgcFrameSource source, CapturedFrame frame)
     {
         var ok = false;
@@ -369,7 +395,10 @@ public sealed partial class LiveDetectionService
             {
                 _lastCaptureProblem = problem;
                 Log("Live detection: window capture unavailable (" + problem + ")");
+                _services.Milestones.CaptureFailed(problem);
             }
+            if (ok && !_services.Milestones.FrameSeen)
+                _services.Milestones.FrameReceived(frame.WindowWidth, frame.WindowHeight, BrightestColourValue(frame.ScanBuffer));
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {

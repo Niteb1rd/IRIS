@@ -111,7 +111,7 @@
 
         <TabControl x:Name="Tabs" Grid.Row="1" Margin="8,8,8,0" SelectionChanged="OnTabsSelectionChanged">
 
-            <TabItem Header="Players">
+            <TabItem x:Name="PlayersTab" Header="Players">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />

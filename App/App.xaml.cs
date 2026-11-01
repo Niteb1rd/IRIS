@@ -11,6 +11,7 @@ using System.Windows.Threading;
 using Iris.App.Services;
 using Iris.App.Views;
 using Iris.Core.Config;
+using Iris.Core.Updates;
 
 namespace Iris.App;
 
@@ -30,7 +31,7 @@ public partial class App : Application
     private LiveDetectionService? _live;
     private bool _shuttingDown;
 
-    private const string AnswerFirstText = "Answer the open IRIS question first.";
+    private const string RunningInTrayText = "IRIS is running in the system tray. Right-click the icon for Settings.";
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -38,7 +39,7 @@ public partial class App : Application
 
         if (!WindowsRequirement.IsMet)
         {
-            PromptDialog.Tell(WindowsRequirement.Message, balloonText: string.Empty, notify: null, owner: null, userJustActed: true, okText: "Close");
+            PromptDialog.Tell(WindowsRequirement.Message, owner: null, userJustActed: true, okText: "Close");
             Shutdown(1);
             return;
         }
@@ -75,6 +76,10 @@ public partial class App : Application
         var services = AppServices.Create(AppContext.BaseDirectory);
         _services = services;
 
+        var leftovers = UpdateInstaller.RemoveLeftovers(AppContext.BaseDirectory, UpdateNotifier.StagingFolder);
+        if (leftovers > 0)
+            services.Log.Write(services.Clock.UtcNow, $"Update: removed {leftovers} file(s) left from the previous version");
+
         DispatcherUnhandledException += OnUnhandledException;
 
         var imports = new ImportCoordinator(services);
@@ -84,7 +89,6 @@ public partial class App : Application
 
         var tray = new TrayIcon();
         _tray = tray;
-        services.Notify = text => tray.ShowBalloon(text);
         updater.RefreshingChanged += (_, _) => tray.SetActivity(updater.IsRefreshing ? "refreshing the cache..." : null);
         updater.FillMissingFinished += (_, message) => ShowStatus(message);
         tray.SettingsRequested += (_, _) => OpenSettings();
@@ -128,7 +132,7 @@ public partial class App : Application
 
         var load = services.ListLoad;
         if (!load.IsValid)
-            ShowListProblems(load.Errors.ToList(), load.Warnings.ToList(), services.Notify);
+            ShowListProblems(load.Errors.ToList(), load.Warnings.ToList());
 
         if (_shuttingDown)
             return;
@@ -148,27 +152,23 @@ public partial class App : Application
             var answer = PromptDialog.Ask(
                 "Errors were detected in your config files:\n\n- " + string.Join(".\n- ", problems) + ".\n\n"
                 + "Your files were not changed. Open Settings to see the errors and fix them now?",
-                "Errors were detected in your config files.", services.Notify, owner: null, userJustActed: true);
+                owner: null, userJustActed: true);
             if (_shuttingDown)
                 return;
             if (answer && load.IsValid)
                 OpenSettings();
         }
-        else if (load.IsValid && load.Warnings.Count > 0)
-        {
-            var extra = load.Warnings.Count > 1 ? $" (and {load.Warnings.Count - 1} more)" : string.Empty;
-            _tray?.ShowBalloon("IRIS is running in the system tray. Note about your list file: " + load.Warnings[0] + extra);
-        }
         else if (load.IsValid)
         {
-            _tray?.ShowBalloon("IRIS is running in the system tray. Right-click the icon for Settings.");
+            _tray?.ShowBalloon(RunningInTrayText);
         }
 
         var checker = new HostedConfigAutoChecker(services, imports);
         _hostedChecker = checker;
         checker.Start();
 
-        var notifier = new UpdateNotifier(services, () => !_shuttingDown && !imports.IsBusy && !PromptDialog.IsAnyOpen);
+        var notifier = new UpdateNotifier(
+            services, () => !_shuttingDown && !imports.IsBusy && !PromptDialog.IsAnyOpen, text => _tray?.SetActivity(text), ApplyUpdate);
         _updateNotifier = notifier;
         notifier.Start();
 
@@ -177,6 +177,12 @@ public partial class App : Application
     }
 
     protected override void OnExit(ExitEventArgs e)
+    {
+        ReleaseAll();
+        base.OnExit(e);
+    }
+
+    private void ReleaseAll()
     {
         _hostedChecker?.Dispose();
         _hostedChecker = null;
@@ -203,8 +209,6 @@ public partial class App : Application
             _mutex.Dispose();
             _mutex = null;
         }
-
-        base.OnExit(e);
     }
 
     private void OpenSettings()
@@ -214,7 +218,8 @@ public partial class App : Application
 
         if (_imports?.IsBusy == true)
         {
-            _tray?.ShowBalloon(AnswerFirstText);
+            if (!DialogHelper.ActivateModal())
+                _configWindow?.Activate();
             return;
         }
 
@@ -237,10 +242,7 @@ public partial class App : Application
     {
         if (_shuttingDown)
             return;
-        if (_configWindow is not null)
-            _configWindow.ShowStatus(message);
-        else
-            _tray?.ShowBalloon(message);
+        _configWindow?.ShowStatus(message);
     }
 
     private void OpenLog()
@@ -268,7 +270,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            _tray?.ShowBalloon("Could not open the log: " + ex.Message);
+            services.Log.Write(DateTimeOffset.UtcNow, "Could not open the log: " + ex.Message);
         }
     }
 
@@ -286,40 +288,37 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            _tray?.ShowBalloon("Could not open the config location: " + ex.Message);
+            services.Log.Write(DateTimeOffset.UtcNow, "Could not open the config location: " + ex.Message);
         }
     }
 
-    private void Quit()
+    private void Quit() => Quit(restartExe: null);
+
+    private void ApplyUpdate(string newRoot, ReleaseVersion version)
+    {
+        if (_shuttingDown || _services is null)
+            return;
+
+        var installFolder = AppContext.BaseDirectory;
+        var result = UpdateInstaller.Install(newRoot, installFolder);
+        if (!result.Success)
+        {
+            _services.Log.Write(_services.Clock.UtcNow, "Update: install failed: " + result.Error);
+            _updateNotifier?.OfferReleasePage("The update could not be installed: " + result.Error);
+            return;
+        }
+
+        _services.Log.Write(_services.Clock.UtcNow, $"Update: installed {result.Files} file(s); restarting");
+        if (InstallerRegistration.SetVersion(installFolder, version.ToString()))
+            _services.Log.Write(_services.Clock.UtcNow, $"Update: the installed version shown in Windows' Apps list is now {version}");
+        var exeName = Path.GetFileName(Environment.ProcessPath) ?? "IRIS.exe";
+        Quit(restartExe: Path.Combine(installFolder, exeName));
+    }
+
+    private void Quit(string? restartExe)
     {
         if (_shuttingDown)
             return;
-
-        if (_imports?.IsBusy == true)
-        {
-            _tray?.ShowBalloon(AnswerFirstText);
-            return;
-        }
-
-        var window = _configWindow;
-        if (window is not null)
-        {
-            try
-            {
-                window.Close();
-            }
-            catch (InvalidOperationException)
-            {
-                window.Activate();
-                return;
-            }
-            if (_configWindow is not null)
-            {
-                if (window.IsBusy)
-                    _tray?.ShowBalloon(AnswerFirstText);
-                return;
-            }
-        }
 
         _shuttingDown = true;
         if (_imports is not null)
@@ -329,10 +328,47 @@ public partial class App : Application
         _updateNotifier?.Dispose();
         _services?.RequestShutdown();
         _updater?.StopFillMissing(TimeSpan.FromMilliseconds(500));
+
+        if (restartExe is not null)
+        {
+            DialogHelper.CloseModals();
+            _configWindow?.DiscardOnClose();
+            ReleaseAll();
+            try
+            {
+                Process.Start(new ProcessStartInfo(restartExe) { UseShellExecute = true, WorkingDirectory = AppContext.BaseDirectory });
+            }
+            catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+            {
+            }
+            Environment.Exit(0);
+            return;
+        }
+
+        if (DialogHelper.IsSystemDialogOpen())
+        {
+            _configWindow?.DiscardOnClose();
+            ReleaseAll();
+            Environment.Exit(0);
+            return;
+        }
+
+        DialogHelper.CloseModals();
+        if (_configWindow is { } window)
+        {
+            window.DiscardOnClose();
+            try
+            {
+                window.Close();
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
         Shutdown();
     }
 
-    private static void ShowListProblems(IReadOnlyList<string> errors, IReadOnlyList<string> warnings, Action<string>? notify)
+    private static void ShowListProblems(IReadOnlyList<string> errors, IReadOnlyList<string> warnings)
     {
         var text = new StringBuilder();
         if (errors.Count > 0)
@@ -357,7 +393,7 @@ public partial class App : Application
                 text.AppendLine($"  ...and {warnings.Count - 8} more.");
         }
 
-        PromptDialog.Tell(text.ToString(), "IRIS found problems in your list file.", notify, owner: null, userJustActed: true);
+        PromptDialog.Tell(text.ToString(), owner: null, userJustActed: true);
     }
 
     private void OnUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
@@ -367,7 +403,7 @@ public partial class App : Application
         var claimed = _imports?.TryBeginQuestion() == true;
         try
         {
-            PromptDialog.Tell(message, "Something unexpected went wrong in IRIS.", _services?.Notify, _configWindow);
+            PromptDialog.Tell(message, _configWindow);
         }
         catch (Exception)
         {

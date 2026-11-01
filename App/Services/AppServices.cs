@@ -35,6 +35,9 @@ public sealed partial class AppServices : IDisposable
         _hostedHttp = hostedHttp;
         _hostedClient = new HostedConfigClient(hostedHttp, Clock, log) { LogRequests = AppVersion.Diagnostics };
         Rsi = rsi;
+        Milestones = new StartupMilestones(log, Clock);
+        if (rsi is RsiClient client)
+            client.AnswerObserved = Milestones.OnRsiAnswer;
         ListFile = listFile;
         SettingsFile = settingsFile;
         ListStartup = listStartup;
@@ -65,6 +68,8 @@ public sealed partial class AppServices : IDisposable
     }
 
     public IClock Clock => SystemClock.Instance;
+
+    public StartupMilestones Milestones { get; }
 
     public DataPaths Paths { get; }
 
@@ -111,8 +116,6 @@ public sealed partial class AppServices : IDisposable
     public bool SettingsFileHasErrors => SettingsFileErrors.Count > 0;
 
     public bool SettingsFileNeedsSave => SettingsFileHasErrors;
-
-    public Action<string>? Notify { get; set; }
 
     public event EventHandler? ListApplied;
 

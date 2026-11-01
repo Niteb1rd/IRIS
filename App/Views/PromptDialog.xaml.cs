@@ -35,7 +35,7 @@ public partial class PromptDialog : Window
         _openCount++;
         try
         {
-            dialog.ShowDialog();
+            DialogHelper.ShowModal(dialog);
         }
         finally
         {
@@ -43,19 +43,18 @@ public partial class PromptDialog : Window
         }
     }
 
-    public static bool Ask(
-        string message, string balloonText, Action<string>? notify, Window? owner, bool defaultYes = true, bool userJustActed = false)
+    public static bool Ask(string message, Window? owner, bool defaultYes = true, bool userJustActed = false)
     {
         var dialog = new PromptDialog(message, yesNo: true, defaultYes);
-        DialogHelper.PrepareBackgroundDialog(dialog, owner, balloonText, notify, userJustActed);
+        DialogHelper.PrepareBackgroundDialog(dialog, owner, userJustActed);
         ShowCounted(dialog);
         return dialog._yes;
     }
 
-    public static void Tell(string message, string balloonText, Action<string>? notify, Window? owner, bool userJustActed = false, string okText = "OK")
+    public static void Tell(string message, Window? owner, bool userJustActed = false, string okText = "OK")
     {
         var dialog = new PromptDialog(message, yesNo: false, defaultYes: true, okText);
-        DialogHelper.PrepareBackgroundDialog(dialog, owner, balloonText, notify, userJustActed);
+        DialogHelper.PrepareBackgroundDialog(dialog, owner, userJustActed);
         ShowCounted(dialog);
     }
 
@@ -65,7 +64,10 @@ public partial class PromptDialog : Window
             return;
 
         var dialog = new PromptDialog(message, yesNo: false, defaultYes: true, okText: "Close") { _modeless = true };
-        DialogHelper.PrepareBackgroundDialog(dialog, owner: null, balloonText: string.Empty, notify: null);
+        dialog.ShowActivated = false;
+        dialog.ShowInTaskbar = true;
+        dialog.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        dialog.Topmost = true;
         dialog.Closed += (_, _) =>
         {
             if (ReferenceEquals(_notice, dialog))

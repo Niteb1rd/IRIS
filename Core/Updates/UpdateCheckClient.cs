@@ -1,15 +1,25 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Iris.Core.Lookup;
 
 namespace Iris.Core.Updates;
 
-public sealed record UpdateCheckResult(bool Success, ReleaseVersion? Newer, string? Error)
+public sealed record LatestRelease(ReleaseVersion Version, string Tag, string? PortableSha256)
 {
+    public bool CanInstall => PortableSha256 is not null;
+
+    public Uri DownloadUri => new(string.Format(CultureInfo.InvariantCulture, CacheSettings.UpdateDownloadUrlFormat, Uri.EscapeDataString(Tag)));
+}
+
+public sealed record UpdateCheckResult(bool Success, LatestRelease? Release, string? Error)
+{
+    public ReleaseVersion? Newer => Release?.Version;
+
     public static UpdateCheckResult UpToDate { get; } = new(true, null, null);
 
-    public static UpdateCheckResult Available(ReleaseVersion version) => new(true, version, null);
+    public static UpdateCheckResult Available(LatestRelease release) => new(true, release, null);
 
     public static UpdateCheckResult Failed(string error) => new(false, null, error);
 }
@@ -62,12 +72,13 @@ public sealed class UpdateCheckClient
                 }
             }
 
-            var latest = ParseLatest(body.ToArray());
+            var latest = ParseRelease(body.ToArray());
             if (latest is null)
                 return Fail("no version in the answer", stopwatch.Elapsed);
 
-            var newer = latest.IsNewerThan(current);
-            Log($"Update check: newest public release {latest}, this build {current}{(newer ? " (newer available)" : string.Empty)} ({RsiClient.FormatDuration(stopwatch.Elapsed)})");
+            var newer = latest.Version.IsNewerThan(current);
+            Log($"Update check: newest public release {latest.Version}, this build {current}{(newer ? " (newer available)" : string.Empty)}"
+                + $"{(newer && !latest.CanInstall ? " without a verifiable " + CacheSettings.UpdateAssetName : string.Empty)} ({RsiClient.FormatDuration(stopwatch.Elapsed)})");
             return newer ? UpdateCheckResult.Available(latest) : UpdateCheckResult.UpToDate;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -88,7 +99,7 @@ public sealed class UpdateCheckClient
         }
     }
 
-    public static ReleaseVersion? ParseLatest(byte[] json)
+    public static LatestRelease? ParseRelease(byte[] json)
     {
         try
         {
@@ -98,14 +109,40 @@ public sealed class UpdateCheckClient
                 return null;
             if (IsTrue(root, "draft") || IsTrue(root, "prerelease"))
                 return null;
-            if (!root.TryGetProperty("tag_name", out var tag) || tag.ValueKind != JsonValueKind.String)
+            if (!root.TryGetProperty("tag_name", out var tagElement) || tagElement.ValueKind != JsonValueKind.String)
                 return null;
-            return ReleaseVersion.TryParse(tag.GetString());
+            var tag = tagElement.GetString()!;
+            var version = ReleaseVersion.TryParse(tag);
+            if (version is null || tag.Trim() != tag || tag.Contains('+'))
+                return null;
+            return new LatestRelease(version, tag, PortableDigest(root));
         }
         catch (JsonException)
         {
             return null;
         }
+    }
+
+    private static string? PortableDigest(JsonElement root)
+    {
+        if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+            return null;
+        foreach (var asset in assets.EnumerateArray())
+        {
+            if (asset.ValueKind != JsonValueKind.Object
+                || !asset.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String
+                || !string.Equals(name.GetString(), CacheSettings.UpdateAssetName, StringComparison.Ordinal))
+                continue;
+            if (!asset.TryGetProperty("digest", out var digest) || digest.ValueKind != JsonValueKind.String)
+                return null;
+            const string prefix = "sha256:";
+            var text = digest.GetString()!;
+            if (!text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return null;
+            var hex = text[prefix.Length..].ToLowerInvariant();
+            return hex.Length == 64 && hex.All(char.IsAsciiHexDigit) ? hex : null;
+        }
+        return null;
     }
 
     private static bool IsTrue(JsonElement root, string name) =>

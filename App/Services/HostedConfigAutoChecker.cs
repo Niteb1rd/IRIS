@@ -160,7 +160,7 @@ public sealed class HostedConfigAutoChecker : IDisposable
         {
             Log("Hosted config auto-check: an update is available; asking the user.");
             RememberAttempt();
-            yes = PromptDialog.Ask(Question, Headline, _services.Notify, _imports.Host?.DialogOwner);
+            yes = PromptDialog.Ask(Question, _imports.Host?.DialogOwner);
         }
         finally
         {
@@ -185,8 +185,6 @@ public sealed class HostedConfigAutoChecker : IDisposable
         if (attempt.Outcome != ImportOutcome.Imported)
         {
             Log("Hosted config auto-check: not imported (" + attempt.Outcome + "): " + attempt.Message);
-            if (attempt.Outcome != ImportOutcome.Cancelled)
-                _services.Notify?.Invoke(attempt.Message);
             return;
         }
 
@@ -197,7 +195,7 @@ public sealed class HostedConfigAutoChecker : IDisposable
             if (!remembered.Success)
                 message += " (the version could not be saved: " + remembered.Error + ")";
         }
-        _services.Notify?.Invoke(message);
+        Log("Hosted config auto-check: " + message);
     }
 
     private void RememberAttempt()

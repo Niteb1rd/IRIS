@@ -30,6 +30,8 @@ public sealed partial class LiveDetectionService
                 foreach (var text in _counters.TakeTexts())
                     Log("Live detection: an update was rejected as older than the stored value: " + text);
                 Notify(snapshot);
+                if (!_services.Milestones.PipelineDone)
+                    NoteMilestones(snapshot);
                 lastProblem = null;
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -40,6 +42,21 @@ public sealed partial class LiveDetectionService
                     lastProblem = text;
                     Log($"Live detection: the index thread failed ({text}); it is tried again at the next update");
                 }
+            }
+        }
+    }
+
+    private void NoteMilestones(IndexSnapshot snapshot)
+    {
+        if (snapshot.Markers.Count == 0)
+            return;
+        _services.Milestones.PlateFound();
+        foreach (var marker in snapshot.Markers)
+        {
+            if (marker.Status == PlateStatus.Confirmed)
+            {
+                _services.Milestones.NameConfirmed();
+                return;
             }
         }
     }
