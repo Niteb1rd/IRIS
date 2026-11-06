@@ -111,6 +111,7 @@ public sealed partial class CacheDatabase : IDisposable
         + "archetype TEXT, "
         + "activities TEXT NOT NULL, "
         + "last_refreshed TEXT NOT NULL, "
+        + "name TEXT, "
         + "PRIMARY KEY (handle, position))",
 
         "CREATE TABLE orgs ("
@@ -153,6 +154,8 @@ public sealed partial class CacheDatabase : IDisposable
         "ALTER TABLE not_found ADD COLUMN miss_count INTEGER NOT NULL DEFAULT 1",
     };
 
+    private const string PlayerOrgNameColumn = "ALTER TABLE player_orgs ADD COLUMN name TEXT";
+
     private void EnsureSchema()
     {
         lock (_gate)
@@ -163,7 +166,11 @@ public sealed partial class CacheDatabase : IDisposable
                     $"The cache file has schema version {version}, but this IRIS only understands up to {CurrentSchemaVersion}. "
                     + "It was probably written by a newer IRIS. Update IRIS or delete the cache file (cache.db, and cache.db-wal / cache.db-shm next to it if they are there).");
             if (version == CurrentSchemaVersion)
+            {
+                if (!HasColumn("player_orgs", "name"))
+                    InTransaction(() => Execute(PlayerOrgNameColumn));
                 return;
+            }
 
             InTransaction(() =>
             {
@@ -176,6 +183,8 @@ public sealed partial class CacheDatabase : IDisposable
                 if (version < 3 && !HasColumn("not_found", "miss_count"))
                     foreach (var statement in Version3Statements)
                         Execute(statement);
+                if (!HasColumn("player_orgs", "name"))
+                    Execute(PlayerOrgNameColumn);
                 Execute("PRAGMA user_version = " + CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture));
             });
         }

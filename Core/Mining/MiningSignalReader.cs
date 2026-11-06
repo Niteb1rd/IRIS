@@ -48,7 +48,14 @@ public sealed class MiningSignalReader : IDisposable
     {
         var lh = LineHeight(windowHeight, settings);
         var cy = settings.RowCentreY * windowHeight / 1440.0;
-        return Area(windowWidth, windowHeight, settings, cy - settings.SearchHalfHeightLines * lh, cy + settings.SearchHalfHeightLines * lh);
+        return Area(windowWidth, windowHeight, settings, cy - settings.SearchAboveLines * lh, cy + settings.SearchBelowLines * lh);
+    }
+
+    public static PixelRect RowSearchArea(int windowWidth, int windowHeight, MiningSettings settings)
+    {
+        var lh = LineHeight(windowHeight, settings);
+        var cy = settings.RowCentreY * windowHeight / 1440.0;
+        return Area(windowWidth, windowHeight, settings, cy - settings.RowSearchHalfLines * lh, cy + settings.RowSearchHalfLines * lh);
     }
 
     public static PixelRect LockArea(int windowWidth, int windowHeight, double rowTop, MiningSettings settings)
@@ -70,29 +77,117 @@ public sealed class MiningSignalReader : IDisposable
 
     private static double LineHeight(int windowHeight, MiningSettings settings) => settings.LineHeightAt1440 * windowHeight / 1440.0;
 
+    public SignalRead Search(Mat image, Rect region, int windowWidth, int windowHeight)
+    {
+        var rows = RowSearchArea(windowWidth, windowHeight, _settings);
+        var x0 = Math.Max((int)Math.Round(rows.X), region.X);
+        var y0 = Math.Max((int)Math.Round(rows.Y), region.Y);
+        var x1 = Math.Min((int)Math.Round(rows.X + rows.Width), Math.Min(region.X + region.Width, region.X + image.Cols));
+        var y1 = Math.Min((int)Math.Round(rows.Y + rows.Height), Math.Min(region.Y + region.Height, region.Y + image.Rows));
+        if (x1 - x0 >= 4 && y1 - y0 >= 4 && !image.Empty())
+        {
+            var band = new Rect(x0, y0, x1 - x0, y1 - y0);
+            using var part = new Mat(image, new Rect(band.X - region.X, band.Y - region.Y, band.Width, band.Height));
+            var read = ReadRows(part, band, windowWidth, windowHeight);
+            if (read.State != SignalState.None)
+                return read;
+        }
+
+        return ReadFromPin(image, region, windowWidth, windowHeight);
+    }
+
     public SignalRead Read(Mat image, Rect region, int windowWidth, int windowHeight)
     {
+        var read = ReadRows(image, region, windowWidth, windowHeight);
+        return read.State != SignalState.None ? read : ReadFromPin(image, region, windowWidth, windowHeight);
+    }
+
+    private bool Prepare(Mat image, int windowHeight)
+    {
         if (image.Empty() || image.Rows < 4 || image.Cols < 4 || windowHeight <= 0)
-            return SignalRead.Nothing;
+            return false;
         if (image.Channels() == 4)
             Cv2.CvtColor(image, _bgr, ColorConversionCodes.BGRA2BGR);
         else
             image.CopyTo(_bgr);
+        Ink(windowHeight / 1440.0);
+        return true;
+    }
 
-        var scale = windowHeight / 1440.0;
-        var lh = _settings.LineHeightAt1440 * scale;
+    private SignalRead ReadRows(Mat image, Rect region, int windowWidth, int windowHeight)
+    {
+        var lh = _settings.LineHeightAt1440 * windowHeight / 1440.0;
         var h = (int)Math.Round(lh);
-        if (h < 4)
+        if (h < 4 || !Prepare(image, windowHeight))
             return SignalRead.Nothing;
-        Ink(scale);
         var width = _ink.Cols;
         var height = _ink.Rows;
         var ink = Bytes(_ink);
 
         var groups = new List<Group>();
         foreach (var rowTop in RowTops(ink, width, height, h))
-            groups.AddRange(ReadRow(ink, width, height, rowTop, h, lh));
+            groups.AddRange(ReadRow(ink, width, height, rowTop, h, lh, small: false));
+        return Decide(groups, lh, ink, width, region, windowWidth);
+    }
 
+    private SignalRead ReadFromPin(Mat image, Rect region, int windowWidth, int windowHeight)
+    {
+        if (!Prepare(image, windowHeight))
+            return SignalRead.Nothing;
+        var scale = windowHeight / 1440.0;
+        var width = _ink.Cols;
+        var height = _ink.Rows;
+        double bestScore = double.NegativeInfinity, bestHeight = 0;
+        var bestLoc = new Point();
+        using (var inkF = new Mat())
+        using (var template = new Mat())
+        using (var result = new Mat())
+        {
+            _ink.ConvertTo(inkF, MatType.CV_32FC1);
+            for (var pinHeight = _settings.PinHeightMin; pinHeight <= _settings.PinHeightMax; pinHeight++)
+            {
+                var th = (int)Math.Round(pinHeight * scale);
+                var tw = Math.Max(3, (int)Math.Round(th * (double)PinTemplate.Value.Cols / PinTemplate.Value.Rows));
+                if (th < 4 || th > height || tw > width)
+                    continue;
+                Cv2.Resize(PinTemplate.Value, template, new Size(tw, th), 0, 0, InterpolationFlags.Area);
+                Cv2.MatchTemplate(inkF, template, result, TemplateMatchModes.CCoeffNormed);
+                Cv2.MinMaxLoc(result, out _, out double max, out _, out Point loc);
+                if (!double.IsNaN(max) && max > bestScore)
+                {
+                    bestScore = max;
+                    bestHeight = th;
+                    bestLoc = loc;
+                }
+            }
+        }
+
+        if (bestScore < _settings.PinMinScore)
+            return SignalRead.Nothing;
+        var lh = bestHeight * _settings.PinDigitRatio;
+        var h = (int)Math.Round(lh);
+        if (h < 4)
+            return SignalRead.Nothing;
+        var rowTop = (int)Math.Round(bestLoc.Y + bestHeight / 2.0 - lh / 2.0);
+        var ink = Bytes(_ink);
+        var small = h < _settings.SmallRowLines * _settings.LineHeightAt1440 * scale;
+        return Decide(ReadRow(ink, width, height, rowTop, h, lh, small), lh, ink, width, region, windowWidth);
+    }
+
+    private const string PinTemplateText =
+        "DAkLCQYGBAUNEA4OCw4KEAwEBAQBCwgLCAYGBTSSkJmQji0KDAkEBAQCDAkHBwYFRpiblZqRmY5UCgsFBAMACwkGBQYwmZJpLCo2c5ORCAgFBAQCDAYJCQqHmXwACQoMCoKYXgcGBQcDCQQHCgePmE8DDA0NC3WYegQFBQYDBgYDBwePlkcGCg4OC3KYfwAGBQgEBgIEBQiFmXQGCxIODYeaYgAGBQQDAgEEBwgylpBOFxYZXI+TAQIGBgYCAwIBCAgLhJGZjJSMlZBuAAcKBwgEAQQCCAoMI4yVjpiNl4MDBQgHCAYCAAUEBgkMD2eVjJeMlUoACQsGBgcCAgYGCQ4NERSRkJuOgQULDQ0ICQkFBQMHBwoPEhBMjJiMNAQOCgwGBgYDBAQICQ0QEQ8Uf5lsAAkSCwsJCQcEBgYIDAwNExATOJILCRASDAwICAgGCQMIBwoLDg4SD0kFDgwPCwkHCAQEBQQEETBCVG0jCxELFGhJMSIOBAQDBQaGjpOTlpFyChUOfpCUjpGLeQQEBpCXlJaUmZKSNhIrlJGbkpaTlYMAB4+TkJOPlo+VjJeMlY2Vj5KQlI0FCWSNlJSQlpGVjJaMlYuUj5KNik8ACwcMUnB6hYSOiZSJjYeHfHFYCAAJCAoICQYFAgEFBAMFAAMABQIGBgwO";
+
+    private static readonly Lazy<Mat> PinTemplate = new(() =>
+    {
+        var bytes = Convert.FromBase64String(PinTemplateText);
+        var mat = new Mat(24, 21, MatType.CV_32FC1);
+        var values = bytes.Select(b => (float)b).ToArray();
+        Marshal.Copy(values, 0, mat.Data, values.Length);
+        return mat;
+    });
+
+    private SignalRead Decide(List<Group> groups, double lh, byte[] ink, int width, Rect region, int windowWidth)
+    {
         var unique = new List<Group>();
         foreach (var g in groups)
             if (!unique.Any(u => Math.Abs(g.Left - u.Left) <= 0.5 * lh && Math.Abs(g.Top - u.Top) <= 0.5 * lh))
@@ -233,6 +328,8 @@ public sealed class MiningSignalReader : IDisposable
 
         public required int RowHeight { get; init; }
 
+        public bool Small { get; init; }
+
         public int Left { get; init; }
 
         public int Right { get; init; }
@@ -250,7 +347,7 @@ public sealed class MiningSignalReader : IDisposable
         public double Centre => Symbol is { } s ? (s.X + Right) / 2.0 : (Left + Right) / 2.0;
     }
 
-    private List<Group> ReadRow(byte[] ink, int width, int height, int rowTop, int h, double lh)
+    private List<Group> ReadRow(byte[] ink, int width, int height, int rowTop, int h, double lh, bool small)
     {
         var groups = new List<Group>();
         var ya = Math.Max(0, (int)(rowTop - 0.3 * h));
@@ -281,7 +378,7 @@ public sealed class MiningSignalReader : IDisposable
                 if (hh >= 0.7 * h && w <= 1.05 * h && hh <= 1.4 * h && !wide)
                     cells.Add(new Cell(true, x, y, w, hh, i));
                 else if (hh >= 0.7 * h && wide && w <= 1.6 * h)
-                    cells.AddRange(Split(labels ??= Ints(_labels), width, i, x, y, w, hh));
+                    cells.AddRange(SplitOrWhole(strip, stripHeight, width, h, small, labels ??= Ints(_labels), new Cell(true, x, y, w, hh, i)));
                 else if (hh >= 0.25 * h && hh <= 0.6 * h && w <= 0.45 * h && y >= 0.55 * h)
                     cells.Add(new Cell(false, x, y, w, hh, i));
             }
@@ -323,6 +420,7 @@ public sealed class MiningSignalReader : IDisposable
                     StripHeight = stripHeight,
                     Threshold = threshold,
                     RowHeight = h,
+                    Small = small,
                     Left = left,
                     Right = right,
                     Top = ya + gTop,
@@ -333,6 +431,18 @@ public sealed class MiningSignalReader : IDisposable
         }
 
         return groups;
+    }
+
+    private IEnumerable<Cell> SplitOrWhole(byte[] strip, int stripHeight, int width, int h, bool small, int[] labels, Cell whole)
+    {
+        var parts = Split(labels, width, whole.Shape, whole.X, whole.Y, whole.W, whole.H).ToList();
+        if (whole.W > _settings.SplitWholeMaxLines * h)
+            return parts;
+        if (parts.Count != 2)
+            return new List<Cell> { whole };
+        var one = DigitTemplates.BestScore(Patch(strip, stripHeight, h, whole, width), small);
+        var two = parts.Min(p => DigitTemplates.BestScore(Patch(strip, stripHeight, h, p, width), small));
+        return two > one ? parts : new List<Cell> { whole };
     }
 
     private static IEnumerable<Cell> Split(int[] labels, int width, int shape, int x, int y, int w, int hh)
@@ -412,8 +522,8 @@ public sealed class MiningSignalReader : IDisposable
                 continue;
             }
 
-            var patch = Patch(group, cell, width);
-            var (digit, score) = DigitTemplates.Match(patch, _settings.TieMargin, out var all);
+            var patch = Patch(group.Strip, group.StripHeight, group.RowHeight, cell, width);
+            var (digit, score) = DigitTemplates.Match(patch, _settings.TieMargin, out var all, group.Small);
             group.AllScores.Add(all);
             text.Append(digit);
             group.Scores.Add(score);
@@ -422,10 +532,9 @@ public sealed class MiningSignalReader : IDisposable
         return text.ToString();
     }
 
-    private static float[] Patch(Group group, Cell cell, int width)
+    private float[] Patch(byte[] strip, int stripHeight, int h, Cell cell, int width)
     {
-        var h = group.RowHeight;
-        var cw = (int)Math.Round(0.62 * h) + 2;
+        var cw = cell.W > _settings.SplitWidthLines * h && cell.H <= 1.15 * h ? cell.W : (int)Math.Round(0.62 * h) + 2;
         var x0 = (int)Math.Round(cell.X + cell.W / 2.0 - cw / 2.0);
         var y0 = cell.Y - 1;
         var rows = cell.H + 2;
@@ -433,13 +542,13 @@ public sealed class MiningSignalReader : IDisposable
         for (var r = 0; r < rows; r++)
         {
             var y = y0 + r;
-            if (y < 0 || y >= group.StripHeight)
+            if (y < 0 || y >= stripHeight)
                 continue;
             for (var c = 0; c < cw; c++)
             {
                 var x = x0 + c;
                 if (x >= 0 && x < width)
-                    sub[r * cw + c] = group.Strip[y * width + x];
+                    sub[r * cw + c] = strip[y * width + x];
             }
         }
 

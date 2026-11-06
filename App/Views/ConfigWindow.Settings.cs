@@ -15,12 +15,15 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Iris.App.Services;
 using Iris.Core.Config;
 using Iris.Core.Mining;
+using Iris.Core.Overlay;
 using Microsoft.Win32;
+using Forms = System.Windows.Forms;
 
 namespace Iris.App.Views;
 
@@ -32,10 +35,14 @@ public partial class ConfigWindow
         CacheTtlCombo.SelectedIndex = settings.CacheTtlDays == 7 ? 1 : 0;
         OverlayHotkeyBox.HotkeyValue = settings.HotkeyToggleOverlay;
         PanelHotkeyBox.HotkeyValue = settings.HotkeyTogglePanel;
+        TimedHotkeyBox.HotkeyValue = settings.HotkeyTimedOverlay;
+        TimedSecondsCombo.SelectedIndex = TimedSecondsIndex(settings.TimedOverlaySeconds);
         PanelWidthSlider.Value = settings.PanelWidthPercent;
         PanelTextSizeSlider.Value = settings.PanelTextSize;
         PanelRightGapSlider.Value = settings.PanelRightGapPercent;
         PanelTopGapSlider.Value = settings.PanelTopGapPercent;
+        OrgDisplayCombo.SelectedIndex = settings.PanelOrgDisplay == OrgDisplay.Sid ? 1 : 0;
+        MainOrgOnlyCheck.IsChecked = settings.PanelMainOrgOnly;
         BoundaryTopSlider.Value = settings.BoundaryTop;
         BoundaryBottomSlider.Value = settings.BoundaryBottom;
         BoundaryLeftSlider.Value = settings.BoundaryLeft;
@@ -47,6 +54,10 @@ public partial class ConfigWindow
         _hideBorderStored = settings.HideCaptureBorder;
         ShowCaptureControls();
         CheckForUpdatesCheck.IsChecked = settings.CheckForUpdates;
+        MiningDisabledCheck.IsChecked = settings.MiningDisabled;
+        WindowScaleCombo.SelectedIndex = ScaleIndex(settings.SettingsWindowScale);
+        _darkModeShownOn = AppTheme.Resolve(settings.SettingsDarkMode);
+        DarkModeCombo.SelectedIndex = _darkModeShownOn ? 0 : 1;
         LogEnabledCheck.IsChecked = settings.SessionLogEnabled;
         HostedUrlBox.Text = settings.HostedConfigUrl;
         HostedUrlError.Text = string.Empty;
@@ -62,10 +73,16 @@ public partial class ConfigWindow
         CacheTtlDays = CacheTtlCombo.SelectedIndex == 1 ? 7 : 30,
         HotkeyToggleOverlay = OverlayHotkeyBox.HotkeyValue,
         HotkeyTogglePanel = PanelHotkeyBox.HotkeyValue,
+        HotkeyTimedOverlay = TimedHotkeyBox.HotkeyValue,
+        TimedOverlaySeconds = TimedSecondsCombo.SelectedIndex >= 0
+            ? AppSettings.TimedOverlaySecondsMin + TimedSecondsCombo.SelectedIndex
+            : _services.Settings.TimedOverlaySeconds,
         PanelWidthPercent = (int)Math.Round(PanelWidthSlider.Value),
         PanelTextSize = (int)Math.Round(PanelTextSizeSlider.Value),
         PanelRightGapPercent = (int)Math.Round(PanelRightGapSlider.Value),
         PanelTopGapPercent = (int)Math.Round(PanelTopGapSlider.Value),
+        PanelOrgDisplay = OrgDisplayCombo.SelectedIndex == 1 ? OrgDisplay.Sid : OrgDisplay.FullName,
+        PanelMainOrgOnly = MainOrgOnlyCheck.IsChecked == true,
         BoundaryTop = (int)Math.Round(BoundaryTopSlider.Value),
         BoundaryBottom = (int)Math.Round(BoundaryBottomSlider.Value),
         BoundaryLeft = (int)Math.Round(BoundaryLeftSlider.Value),
@@ -75,10 +92,75 @@ public partial class ConfigWindow
         OverlayVisibleInCapture = OverlayVisibleInCaptureCheck.IsEnabled ? OverlayVisibleInCaptureCheck.IsChecked == true : _visibleInCaptureStored,
         HideCaptureBorder = HideCaptureBorderCheck.IsEnabled ? HideCaptureBorderCheck.IsChecked == true : _hideBorderStored,
         CheckForUpdates = CheckForUpdatesCheck.IsChecked == true,
+        MiningDisabled = MiningDisabledCheck.IsChecked == true,
+        SettingsWindowScale = WindowScaleCombo.SelectedIndex >= 0
+            ? AppSettings.SettingsWindowScales[WindowScaleCombo.SelectedIndex]
+            : _services.Settings.SettingsWindowScale,
+        SettingsDarkMode = SelectedDarkMode(),
         SessionLogEnabled = LogEnabledCheck.IsChecked == true,
         HostedConfigUrl = HostedUrlBox.Text.Trim(),
         HostedConfigAutoCheck = HostedAutoCheck.IsChecked == true && IsHostedUrlUsable(),
     };
+
+    private static int TimedSecondsIndex(int seconds) =>
+        Math.Clamp(seconds, AppSettings.TimedOverlaySecondsMin, AppSettings.TimedOverlaySecondsMax) - AppSettings.TimedOverlaySecondsMin;
+
+    private DarkMode SelectedDarkMode()
+    {
+        var saved = _services.Settings.SettingsDarkMode;
+        if (DarkModeCombo.SelectedIndex < 0)
+            return saved;
+        var on = DarkModeCombo.SelectedIndex == 0;
+        if (saved == DarkMode.System && on == _darkModeShownOn)
+            return DarkMode.System;
+        return on ? DarkMode.On : DarkMode.Off;
+    }
+
+    private static int ScaleIndex(int percent)
+    {
+        var scales = AppSettings.SettingsWindowScales;
+        for (var i = 0; i < scales.Count; i++)
+            if (scales[i] == percent)
+                return i;
+        return 0;
+    }
+
+    private void ApplyWindowScale()
+    {
+        var scale = _services.Settings.SettingsWindowScale / 100.0;
+        if (scale <= 0 || Math.Abs(scale - _windowScale) < 0.001)
+            return;
+        var ratio = scale / _windowScale;
+        _windowScale = scale;
+        RootGrid.LayoutTransform = scale == 1.0 ? Transform.Identity : new ScaleTransform(scale, scale);
+
+        var area = WorkArea();
+        MinWidth = Math.Min(BaseMinWidth * scale, area.Width);
+        MinHeight = Math.Min(BaseMinHeight * scale, area.Height);
+        var width = double.IsNaN(Width) ? ActualWidth : Width;
+        var height = double.IsNaN(Height) ? ActualHeight : Height;
+        Width = Math.Clamp(width * ratio, MinWidth, area.Width);
+        Height = Math.Clamp(height * ratio, MinHeight, area.Height);
+        if (!IsLoaded)
+            return;
+
+        Left = Math.Max(area.Left, Math.Min(Left, area.Right - Width));
+        Top = Math.Max(area.Top, Math.Min(Top, area.Bottom - Height));
+    }
+
+    private const double BaseMinWidth = 750;
+    private const double BaseMinHeight = 445;
+
+    private Rect WorkArea()
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        var source = PresentationSource.FromVisual(this);
+        if (handle == IntPtr.Zero || source?.CompositionTarget is null)
+            return SystemParameters.WorkArea;
+        var pixels = Forms.Screen.FromHandle(handle).WorkingArea;
+        var toDip = source.CompositionTarget.TransformFromDevice;
+        return new Rect(toDip.Transform(new Point(pixels.Left, pixels.Top)), toDip.Transform(new Point(pixels.Right, pixels.Bottom)));
+    }
 
     private CaptureMethod SelectedCaptureMethod() => CaptureMethodCombo.SelectedIndex == 1 ? CaptureMethod.WindowCapture : CaptureMethod.DesktopDuplication;
 
@@ -131,22 +213,39 @@ public partial class ConfigWindow
 
     private void OnClearPanelHotkey(object sender, RoutedEventArgs e) => PanelHotkeyBox.ClearHotkey();
 
+    private void OnClearTimedHotkey(object sender, RoutedEventArgs e) => TimedHotkeyBox.ClearHotkey();
+
     private void OnHotkeyStatusChanged(object? sender, EventArgs e) => UpdateHotkeyErrors();
 
     private void UpdateHotkeyErrors()
     {
-        if (OverlayHotkeyError is null || PanelHotkeyError is null)
+        if (OverlayHotkeyError is null || PanelHotkeyError is null || TimedHotkeyError is null)
             return;
         var saved = _services.Settings;
-        var overlayText = OverlayHotkeyBox.HotkeyValue;
-        var panelText = PanelHotkeyBox.HotkeyValue;
-        var same = overlayText.Length > 0 && overlayText == panelText;
-        const string SameText = "Both hotkeys are the same. Choose two different ones.";
+        var rows = new (HotkeyAction Action, HotkeyBox Box, TextBlock Error)[]
+        {
+            (HotkeyAction.ToggleOverlay, OverlayHotkeyBox, OverlayHotkeyError),
+            (HotkeyAction.TogglePanel, PanelHotkeyBox, PanelHotkeyError),
+            (HotkeyAction.TimedOverlay, TimedHotkeyBox, TimedHotkeyError),
+        };
 
-        ShowHotkeyError(OverlayHotkeyError,
-            same ? SameText : overlayText == saved.HotkeyToggleOverlay ? _overlay.Hotkeys.OverlayError : null);
-        ShowHotkeyError(PanelHotkeyError,
-            same ? SameText : panelText == saved.HotkeyTogglePanel ? _overlay.Hotkeys.PanelError : null);
+        foreach (var row in rows)
+        {
+            var text = row.Box.HotkeyValue;
+            string? message = null;
+            foreach (var other in rows)
+            {
+                if (other.Action != row.Action && text.Length > 0 && other.Box.HotkeyValue == text)
+                {
+                    message = $"Same as the {HotkeyManager.NameOf(other.Action)} hotkey. Choose different ones.";
+                    break;
+                }
+            }
+
+            if (message is null && text == HotkeyManager.TextOf(saved, row.Action))
+                message = _overlay.Hotkeys.ErrorOf(row.Action);
+            ShowHotkeyError(row.Error, message);
+        }
     }
 
     private static void ShowHotkeyError(TextBlock block, string? message)
@@ -159,6 +258,7 @@ public partial class ConfigWindow
     {
         if (_isClosed || !_ready)
             return;
+        ApplyWindowScale();
         UpdateHotkeyErrors();
         UpdateSaveButton();
     }
@@ -170,6 +270,8 @@ public partial class ConfigWindow
     }
 
     private void OnOverlaySliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => OverlayValuesChanged();
+
+    private void OnPanelOrgOptionChanged(object sender, RoutedEventArgs e) => OverlayValuesChanged();
 
     private void OnTrackingFpsSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
@@ -205,11 +307,15 @@ public partial class ConfigWindow
         PromptDialog.Tell(RecordingTip, owner: this, userJustActed: true, okText: "Close");
     }
 
-    private void OnTestOverlay(object sender, RoutedEventArgs e)
+    private void OnShowBoundary(object sender, RoutedEventArgs e) => ToggleTest(TestOverlayPart.Boundary);
+
+    private void OnShowInfoPanel(object sender, RoutedEventArgs e) => ToggleTest(TestOverlayPart.Panel);
+
+    private void ToggleTest(TestOverlayPart part)
     {
         try
         {
-            if (_overlay.IsTestRunning)
+            if (_overlay.IsTestRunning && _overlay.TestPart == part)
             {
                 _testStoppedByUser = true;
                 try
@@ -220,11 +326,11 @@ public partial class ConfigWindow
                 {
                     _testStoppedByUser = false;
                 }
-                SetFooter("Test overlay stopped.");
+                SetFooter($"{TestName(part)} stopped.");
                 return;
             }
-            var where = _overlay.StartTest(BuildSettings(), this);
-            SetFooter($"Test overlay shown {where} for {OverlayController.TestSeconds} seconds.");
+            var where = _overlay.StartTest(BuildSettings(), this, part);
+            SetFooter($"{TestName(part)} shown {where} for {OverlayController.TestSeconds} seconds.");
         }
         catch (Exception ex)
         {
@@ -239,14 +345,20 @@ public partial class ConfigWindow
             return;
         UpdateTestButton();
         if (!_overlay.IsTestRunning && !_testStoppedByUser)
-            SetFooter("Test overlay ended.");
+            SetFooter("Sample overlay ended.");
     }
+
+    private static string TestName(TestOverlayPart part) => part == TestOverlayPart.Boundary ? "Boundary sample" : "Info panel sample";
 
     private void UpdateTestButton()
     {
-        TestOverlayButton.Content = _overlay.IsTestRunning
-            ? $"Stop Test Overlay ({_overlay.TestSecondsLeft} s)"
-            : "Show Test Overlay";
+        var running = _overlay.IsTestRunning;
+        BoundaryTestButton.Content = running && _overlay.TestPart == TestOverlayPart.Boundary
+            ? $"Stop Boundary ({_overlay.TestSecondsLeft} s)"
+            : "Show Boundary";
+        PanelTestButton.Content = running && _overlay.TestPart == TestOverlayPart.Panel
+            ? $"Stop Info Panel ({_overlay.TestSecondsLeft} s)"
+            : "Show Info Panel";
     }
 
     private void OnHostedUrlLostFocus(object sender, KeyboardFocusChangedEventArgs e) => ValidateHostedUrl();

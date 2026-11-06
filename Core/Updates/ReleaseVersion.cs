@@ -1,9 +1,18 @@
 using System.Globalization;
+using System.Reflection;
 
 namespace Iris.Core.Updates;
 
 public sealed record ReleaseVersion(int Major, int Minor, int Patch, string Label) : IComparable<ReleaseVersion>
 {
+    public static ReleaseVersion? Running { get; } =
+        TryParse(typeof(ReleaseVersion).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion);
+
+    public string Number => string.Create(CultureInfo.InvariantCulture, $"{Major}.{Minor}.{Patch}");
+
+    public bool NumberIsNewerThan(ReleaseVersion other) =>
+        Major != other.Major ? Major > other.Major : Minor != other.Minor ? Minor > other.Minor : Patch > other.Patch;
+
     public bool IsDev => Label.Equals("dev", StringComparison.OrdinalIgnoreCase) || Label.StartsWith("dev.", StringComparison.OrdinalIgnoreCase);
 
     public override string ToString() =>

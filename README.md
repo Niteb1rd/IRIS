@@ -14,7 +14,7 @@ IRIS.exe is not code-signed, so Windows SmartScreen may show "Windows protected 
 2. Run IRIS.exe. The first time Windows may ask to install the Microsoft .NET, accept.
 3. Set Star Citizen Window Mode to Borderless (Sorry other modes do not work).
 4. Right-click the IRIS tray icon, choose Settings, and add players and orgs.
-5. Press Show Test Overlay to check and resize the panel and boundary, then Save.
+5. Press Show Boundary and Show Info Panel to check and resize the boundary and the panel, then Save.
 
 ## Requirements
 
@@ -37,6 +37,24 @@ For better tracking, turn off Hardware-Accelerated GPU Scheduling (Windows Setti
 - In settings, Players, Orgs and Org-Attribute tabs set who gets a bracket and which colour.
 - Import and Export share lists; a Hosted Config URL lets an org share one list.
 - Config\exclusions.txt holds names IRIS ignores; edit it in Notepad.
+- "Only check main org" (Orgs and Org-Attribute tabs) ignores a player's affiliate orgs for that tab.
+- Players on no lists get the No Match colour (in Org-Attribute tab), Grey by default.
+
+## Hotkeys
+
+Change them in Settings > Hotkeys.
+
+- Shift+F11: Toggle Overlay.
+- Shift+F12: Toggle Info Panel.
+- Tab: Activate Overlay for 10 seconds (5-30) while the overlay is off
+
+## Mining
+
+- In scan mode, IRIS reads the unknown signal number and shows the corresponding resource (for example "Riccite 2x").
+- Settings has Edit Mining Signals Data, which opens Config\mining.txt to change the look-up table; delete that file to go back to defaults.
+- A signal above the table maximum shows "Multiple" or "Ore/Multiple".
+- Can disable Mining feature in Settings.
+- The resource text requires the info panel to be on.
 
 ## Network
 

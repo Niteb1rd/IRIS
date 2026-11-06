@@ -142,7 +142,8 @@ public sealed class TrackingWorker
             found++;
             if (confirmed)
                 confirmedFound++;
-            var distanceWidth = evidence == NameEvidence.Anchored ? PartialLine.StoredWidth(marker) : line.Part?.Width ?? line.Box.Width;
+            var distanceWidth = evidence == NameEvidence.Anchored ? PartialLine.StoredWidth(marker)
+                : line.Part is { } part && TrackAssigner.StoresUnionPart(marker, line, _settings) ? part.Width : line.Box.Width;
             current[marker.Id] = marker.AfterHit(frameMs, position.CentreX, position.Top, position.Width, distanceWidth);
             if (tracing)
                 TraceMarker(frame, input, region.Kind, crowdedBefore!, notes!, line, position, evidence);

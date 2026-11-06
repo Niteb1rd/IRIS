@@ -69,7 +69,7 @@ public sealed class RefresherNameSource : INameSource
             foreach (var row in config.Orgs)
             {
                 if (seen.Add(row.Sid) && _database.IsOrgMember(row.Sid, name))
-                    (orgs ??= new List<OrgMembership>()).Add(new OrgMembership(row.Sid, false));
+                    (orgs ??= new List<OrgMembership>()).Add(new OrgMembership(row.Sid, false, Name: _database.GetOrg(row.Sid)?.LongName));
             }
 
             return orgs is null ? null : new NameAnswer(RsiState.Pending, orgs);

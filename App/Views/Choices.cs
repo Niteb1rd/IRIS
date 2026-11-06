@@ -21,6 +21,7 @@ public static class Choices
         new KindChoice(AttributeKind.Activity, "Org-Activity"),
         new KindChoice(AttributeKind.Redacted, "Redacted"),
         new KindChoice(AttributeKind.NoOrg, "No Org"),
+        new KindChoice(AttributeKind.HiddenMainOrg, "Hidden Main Org"),
     };
 
     public static IReadOnlyList<string> SuggestionsFor(AttributeKind kind) => OrgRuleValues.VocabularyFor(kind);
@@ -32,6 +33,7 @@ public static class Choices
     {
         AttributeKind.Redacted => "Player belongs in a Redacted org",
         AttributeKind.NoOrg => "Player is in no orgs/hidden orgs",
+        AttributeKind.HiddenMainOrg => "Player's main org is hidden",
         AttributeKind.NoMatch => "Player does not meet any other rule",
         _ => string.Empty,
     };

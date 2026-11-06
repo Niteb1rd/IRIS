@@ -131,7 +131,11 @@ public sealed partial class AppServices : IDisposable
 
     public SocialConfig CurrentConfig { get; private set; }
 
-    public bool IsOverlayDisabled => Settings.OverlayDisabled;
+    public bool IsOverlayDisabled => Settings.OverlayDisabled && !_timedOverlayOn;
+
+    public bool IsTimedOverlayOn => _timedOverlayOn;
+
+    private volatile bool _timedOverlayOn;
 
     public event EventHandler? OverlayDisabledChanged;
 

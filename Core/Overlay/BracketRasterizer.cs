@@ -3,8 +3,11 @@ namespace Iris.Core.Overlay;
 
 public sealed class BracketRasterizer
 {
+    public const float Opacity = 0.5f;
+
     private const int CurveSteps = 8;
-    private const float DarkAlpha = 0xE6 / 255f;
+    private const float DarkAlpha = 0xE6 / 255f * Opacity;
+    private const float ColorAlpha = Opacity;
     private static readonly (float R, float G, float B) DarkColor = (0x0A, 0x0A, 0x0F);
 
     private readonly Segments _left = new();
@@ -31,8 +34,8 @@ public sealed class BracketRasterizer
 
             Stroke(pixels, stride, width, height, _left, darkRadius, DarkColor.R, DarkColor.G, DarkColor.B, DarkAlpha);
             Stroke(pixels, stride, width, height, _right, darkRadius, DarkColor.R, DarkColor.G, DarkColor.B, DarkAlpha);
-            Stroke(pixels, stride, width, height, _left, colorRadius, r, g, b, 1f);
-            Stroke(pixels, stride, width, height, _right, colorRadius, r, g, b, 1f);
+            Stroke(pixels, stride, width, height, _left, colorRadius, r, g, b, ColorAlpha);
+            Stroke(pixels, stride, width, height, _right, colorRadius, r, g, b, ColorAlpha);
         }
     }
 

@@ -3,7 +3,7 @@ using Iris.Core.Detection;
 
 namespace Iris.Core.Overlay;
 
-public sealed record OrgMembership(string? Sid, bool IsMain, string? Archetype = null, IReadOnlyList<string>? Activities = null)
+public sealed record OrgMembership(string? Sid, bool IsMain, string? Archetype = null, IReadOnlyList<string>? Activities = null, string? Name = null)
 {
     public bool IsRedacted => Sid is null;
     public IReadOnlyList<string> ActivityList => Activities ?? Array.Empty<string>();
@@ -21,28 +21,32 @@ public sealed record ColorMatch(MatchKind Kind, OverlayColor Color, string? Deci
 
 public static class ColorResolver
 {
+    public const string HiddenMainOrgText = "Hidden Main Org";
+
     public static ColorMatch Resolve(string handle, IReadOnlyList<OrgMembership> orgs, SocialConfig config)
     {
         var player = config.Players.FirstOrDefault(p => LookAlikes.NamesEqual(p.Handle, handle));
         if (player is not null)
             return new ColorMatch(MatchKind.PlayerList, player.Color, null, null);
 
+        var listOrgs = config.OrgsMainOrgOnly ? MainOnly(orgs) : orgs;
         OrgEntry? bestOrg = null;
         foreach (var row in config.Orgs)
         {
-            bool member = orgs.Any(o => o.Sid is not null && string.Equals(o.Sid, row.Sid, StringComparison.OrdinalIgnoreCase));
+            bool member = IsMember(listOrgs, row.Sid);
             if (member && (bestOrg is null || row.Priority < bestOrg.Priority))
                 bestOrg = row;
         }
         if (bestOrg is not null)
             return new ColorMatch(MatchKind.OrgList, bestOrg.Color, bestOrg.Sid, null);
 
+        var ruleOrgs = config.OrgRulesMainOrgOnly ? MainOnly(orgs) : orgs;
         OrgAttributeRule? bestRule = null;
         string? ruleOrg = null;
         string? ruleText = null;
         foreach (var rule in config.OrgRules)
         {
-            var (hit, sid, text) = RuleHits(rule, orgs);
+            var (hit, sid, text) = RuleHits(rule, ruleOrgs);
             if (hit && (bestRule is null || rule.Priority < bestRule.Priority))
             {
                 bestRule = rule;
@@ -61,7 +65,10 @@ public static class ColorResolver
     {
         if (config.Players.Any(p => LookAlikes.NamesEqual(p.Handle, handle)))
             return true;
-        if (config.Orgs.Any(row => orgs.Any(o => o.Sid is not null && string.Equals(o.Sid, row.Sid, StringComparison.OrdinalIgnoreCase))))
+        var listOrgs = config.OrgsMainOrgOnly ? MainOnly(orgs) : orgs;
+        if (config.Orgs.Any(row => IsMember(listOrgs, row.Sid)))
+            return true;
+        if (config.OrgRulesMainOrgOnly)
             return true;
         return !config.OrgRules.Any(rule => rule.Kind is AttributeKind.Archetype or AttributeKind.Activity);
     }
@@ -83,6 +90,8 @@ public static class ColorResolver
                 return (orgs.Count == 0, null, "No Org");
             case AttributeKind.Redacted:
                 return (orgs.Any(o => o.IsRedacted), null, "REDACTED");
+            case AttributeKind.HiddenMainOrg:
+                return (orgs.Any(o => o.IsMain && o.IsRedacted), null, HiddenMainOrgText);
             case AttributeKind.NoMatch:
                 return (false, null, null);
             case AttributeKind.Archetype:
@@ -99,6 +108,11 @@ public static class ColorResolver
                 return (false, null, null);
         }
     }
+
+    private static bool IsMember(IReadOnlyList<OrgMembership> orgs, string sid) =>
+        orgs.Any(o => o.Sid is not null && string.Equals(o.Sid, sid, StringComparison.OrdinalIgnoreCase));
+
+    private static IReadOnlyList<OrgMembership> MainOnly(IReadOnlyList<OrgMembership> orgs) => orgs.Where(o => o.IsMain).ToList();
 
     private static IEnumerable<OrgMembership> OrderMainFirst(IReadOnlyList<OrgMembership> orgs) =>
         orgs.Where(o => o.IsMain).Concat(orgs.Where(o => !o.IsMain));

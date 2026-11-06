@@ -13,6 +13,7 @@ public partial class PromptDialog : Window
     private PromptDialog(string message, bool yesNo, bool defaultYes, string okText = "OK")
     {
         InitializeComponent();
+        AppTheme.Attach(this);
         MessageText.Text = message;
         if (yesNo)
         {

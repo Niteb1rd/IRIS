@@ -77,6 +77,10 @@ public partial class App : Application
         var services = AppServices.Create(AppContext.BaseDirectory);
         _services = services;
 
+        void ApplyTheme() => AppTheme.Apply(services.Settings.SettingsDarkMode, text => services.Log.Write(services.Clock.UtcNow, text));
+        ApplyTheme();
+        services.SettingsApplied += (_, _) => ApplyTheme();
+
         var leftovers = UpdateInstaller.RemoveLeftovers(AppContext.BaseDirectory, UpdateNotifier.StagingFolder);
         if (leftovers > 0)
             services.Log.Write(services.Clock.UtcNow, $"Update: removed {leftovers} file(s) left from the previous version");
@@ -112,7 +116,7 @@ public partial class App : Application
 
         void SyncTrayChecks()
         {
-            tray.SetOverlayDisabled(services.Settings.OverlayDisabled);
+            tray.SetOverlayDisabled(services.Settings.OverlayDisabled, services.IsOverlayDisabled);
             tray.SetPanelDisabled(!services.Settings.PanelEnabled);
         }
         tray.ToggleOverlayRequested += (_, _) =>
@@ -126,6 +130,7 @@ public partial class App : Application
             SyncTrayChecks();
         };
         services.SettingsApplied += (_, _) => SyncTrayChecks();
+        services.OverlayDisabledChanged += (_, _) => SyncTrayChecks();
         SyncTrayChecks();
         tray.OpenLogRequested += (_, _) => OpenLog();
         tray.OpenConfigLocationRequested += (_, _) => OpenConfigLocation();

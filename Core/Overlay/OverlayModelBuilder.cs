@@ -24,8 +24,8 @@ public static class OverlayModelBuilder
 
             if (seen.Add(detected.Handle))
             {
-                var line = orgs is null ? PanelText.NotLookedUp : PanelText.OrgLine(orgs, match);
-                entries.Add(new PanelEntry(detected.Handle, match.Kind, match.Color, line));
+                var shown = orgs is null ? PanelOrgs.NotLookedUp : new PanelOrgs(orgs, match);
+                entries.Add(new PanelEntry(detected.Handle, match.Kind, match.Color, shown));
             }
         }
 

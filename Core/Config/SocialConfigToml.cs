@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using Iris.Core.Lookup;
+using Iris.Core.Updates;
 using Tomlyn;
 using Tomlyn.Model;
 
@@ -32,8 +33,12 @@ public static class SocialConfigToml
         sb.AppendLine("# IRIS social config (TOML format). Shareable: contains no personal settings.");
         sb.AppendLine($"format = {Quote(FormatId)}");
         sb.AppendLine($"format_version = {FormatVersion}");
+        if ((ReleaseVersion.Running?.Number ?? config.IrisVersion) is { } written)
+            sb.AppendLine($"iris_version = {Quote(written)}");
         if (!string.IsNullOrWhiteSpace(config.Name))
             sb.AppendLine($"name = {Quote(config.Name!)}");
+        sb.AppendLine($"orgs_main_org_only = {(config.OrgsMainOrgOnly ? "true" : "false")}");
+        sb.AppendLine($"org_rules_main_org_only = {(config.OrgRulesMainOrgOnly ? "true" : "false")}");
 
         foreach (var p in config.Players)
         {
@@ -132,7 +137,14 @@ public static class SocialConfigToml
             if (name is string n) config.Name = n;
             else errors.Add("name: must be text.");
         }
-        WarnUnknown(root, "", warnings, "format", "format_version", "name", "players", "orgs", "org_rules");
+        if (root.TryGetValue("iris_version", out var written))
+        {
+            if (written is string w && ReleaseVersion.TryParse(w) is not null) config.IrisVersion = w.Trim();
+            else warnings.Add("iris_version: not a version (x.y.z), ignored.");
+        }
+        config.OrgsMainOrgOnly = GetFlag(root, "orgs_main_org_only", errors);
+        config.OrgRulesMainOrgOnly = GetFlag(root, "org_rules_main_org_only", errors);
+        WarnUnknown(root, "", warnings, "format", "format_version", "iris_version", "name", "orgs_main_org_only", "org_rules_main_org_only", "players", "orgs", "org_rules");
 
         var seenHandles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (t, path) in Tables(root, "players", errors))
@@ -177,7 +189,7 @@ public static class SocialConfigToml
             if (kindText is null || color is null || (kind != AttributeKind.NoMatch && prio is null)) continue;
             if (kind is null)
             {
-                errors.Add($"{path}.kind: \"{kindText}\" must be one of archetype, activity, redacted, no_org, no_match.");
+                errors.Add($"{path}.kind: \"{kindText}\" must be one of archetype, activity, redacted, no_org, hidden_main_org, no_match.");
                 continue;
             }
 
@@ -217,6 +229,8 @@ public static class SocialConfigToml
 
         config.OrgRules.Add(noMatch ?? NoMatchRule.CreateDefault());
 
+        if (errors.Count > 0 && config.NewerVersionNote() is { } note)
+            errors.Insert(0, note + "; update IRIS to read it.");
         return result;
     }
 
@@ -246,6 +260,16 @@ public static class SocialConfigToml
             return null;
         }
         return s.Trim();
+    }
+
+    private static bool GetFlag(TomlTable root, string key, List<string> errors)
+    {
+        if (!root.TryGetValue(key, out var raw))
+            return false;
+        if (raw is bool value)
+            return value;
+        errors.Add($"{key}: must be true or false.");
+        return false;
     }
 
     private static int? GetPriority(TomlTable t, string path, List<string> errors)
@@ -289,6 +313,7 @@ public static class SocialConfigToml
         AttributeKind.Activity => "activity",
         AttributeKind.Redacted => "redacted",
         AttributeKind.NoOrg => "no_org",
+        AttributeKind.HiddenMainOrg => "hidden_main_org",
         AttributeKind.NoMatch => "no_match",
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
@@ -299,6 +324,7 @@ public static class SocialConfigToml
         "activity" => AttributeKind.Activity,
         "redacted" => AttributeKind.Redacted,
         "no_org" => AttributeKind.NoOrg,
+        "hidden_main_org" => AttributeKind.HiddenMainOrg,
         "no_match" => AttributeKind.NoMatch,
         _ => null,
     };

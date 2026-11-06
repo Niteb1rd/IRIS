@@ -5,6 +5,8 @@
         Width="480" MinWidth="320" SizeToContent="Height"
         ResizeMode="NoResize"
         ShowInTaskbar="True"
+        Background="{DynamicResource Iris.WindowBack}"
+        Foreground="{DynamicResource Iris.Text}"
         WindowStartupLocation="CenterScreen">
 
     <Grid Margin="16">

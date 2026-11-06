@@ -2,7 +2,7 @@ using Iris.Core.Config;
 
 namespace Iris.Core.Overlay;
 
-public sealed record PanelSlot(PanelEntry Entry, PixelRect Rect);
+public sealed record PanelSlot(PanelEntry Entry, PixelRect Rect, IReadOnlyList<string> OrgLines);
 
 public sealed record PanelMessage(IReadOnlyList<string> Lines, PixelRect Rect, bool Centered);
 
@@ -50,7 +50,6 @@ public static class PanelLayout
         var paddingX = PaddingXFor(fontSize);
         var paddingY = PaddingYFor(fontSize);
         var corner = CornerFor(fontSize);
-        var entryHeight = 2 * lineHeight + 2 * paddingY;
         var gap = fontSize * 0.4;
 
         var panelWidth = windowWidth * settings.PanelWidthPercent / 100.0;
@@ -81,15 +80,24 @@ public static class PanelLayout
 
         var entriesTop = messageTop;
 
+        var perLine = CharsPerLine(panelWidth - 2 * paddingX, fontSize);
+        var orgLines = new IReadOnlyList<string>[entries.Count];
+        var tops = new double[entries.Count + 1];
+        tops[0] = entriesTop;
+        for (var i = 0; i < entries.Count; i++)
+        {
+            orgLines[i] = PanelText.Lines(entries[i].Orgs, settings.PanelOrgDisplay, settings.PanelMainOrgOnly, perLine);
+            tops[i + 1] = tops[i] + EntryHeight(orgLines[i].Count, lineHeight, paddingY) + gap;
+        }
+
         var total = entries.Count;
         var shown = total;
-        var allHeight = total * entryHeight + (total - 1) * gap;
-        if (total > 0 && entriesTop + allHeight > limit)
+        if (total > 0 && tops[total] - gap > limit)
         {
             shown = 0;
             for (var k = total - 1; k >= 0; k--)
             {
-                if (entriesTop + k * (entryHeight + gap) + lineHeight <= limit)
+                if (tops[k] + lineHeight <= limit)
                 {
                     shown = k;
                     break;
@@ -99,13 +107,13 @@ public static class PanelLayout
 
         var slots = new List<PanelSlot>(shown);
         for (var i = 0; i < shown; i++)
-            slots.Add(new PanelSlot(entries[i], new PixelRect(left, entriesTop + i * (entryHeight + gap), panelWidth, entryHeight)));
+            slots.Add(new PanelSlot(entries[i], new PixelRect(left, tops[i], panelWidth, EntryHeight(orgLines[i].Count, lineHeight, paddingY)), orgLines[i]));
 
         string? moreText = null;
         var moreRect = default(PixelRect);
         if (shown < total)
         {
-            var moreTop = entriesTop + shown * (entryHeight + gap);
+            var moreTop = tops[shown];
             if (moreTop + lineHeight > windowHeight)
                 moreTop = Math.Max(0, windowHeight - lineHeight);
             moreText = $"+{total - shown} more";
@@ -115,9 +123,13 @@ public static class PanelLayout
         return new PanelLayoutResult(slots, moreText, moreRect, fontSize, lineHeight, paddingX, paddingY, corner, messages);
     }
 
+    public static int CharsPerLine(double width, double fontSize) => Math.Max(8, (int)Math.Floor(width / (fontSize * NoteCharWidth)));
+
+    private static double EntryHeight(int orgLines, double lineHeight, double paddingY) => (1 + orgLines) * lineHeight + 2 * paddingY;
+
     public static IReadOnlyList<string> WrapNote(string text, double width, double fontSize)
     {
-        var perLine = Math.Max(8, (int)Math.Floor(width / (fontSize * NoteCharWidth)));
+        var perLine = CharsPerLine(width, fontSize);
         var lines = new List<string>();
         var current = string.Empty;
         foreach (var word in text.Split(' ', StringSplitOptions.RemoveEmptyEntries))

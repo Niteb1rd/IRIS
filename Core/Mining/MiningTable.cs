@@ -32,7 +32,14 @@ public sealed class MiningTable
         }
 
         _labels = labels.ToDictionary(p => p.Key, p => string.Join(" / ", p.Value));
+        MaxSignal = _labels.Count > 0 ? _labels.Keys.Max() : 0;
     }
+
+    public const string MultipleLabel = "Multiple";
+
+    public const string OreMultipleLabel = "Ore/Multiple";
+
+    public int MaxSignal { get; }
 
     public static MiningTable Empty { get; } = new(Array.Empty<MiningResource>(), Array.Empty<string>(), null);
 
@@ -45,6 +52,9 @@ public sealed class MiningTable
     public string? Lookup(int value) => _labels.TryGetValue(value, out var label) ? label : null;
 
     public bool Contains(int value) => _labels.ContainsKey(value);
+
+    public string? AboveLimitLabel(int value) =>
+        MaxSignal <= 0 || value <= MaxSignal ? null : value % 1000 == 0 ? MultipleLabel : OreMultipleLabel;
 
     public static MiningTable Parse(string text)
     {

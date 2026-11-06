@@ -40,6 +40,37 @@ public static class PlateColors
 {
     public static PlateColorStats? Measure(IEnumerable<LineMask> rows)
     {
+        if (MedianInk(rows) is not { } ink)
+            return null;
+        var (bm, gm, rm, total) = ink;
+        var mx = Math.Max(rm, Math.Max(gm, bm));
+        var mn = Math.Min(rm, Math.Min(gm, bm));
+        var saturation = mx == 0 ? 0.0 : (mx - mn) / mx;
+        double hue;
+        if (mx == mn)
+            hue = 0.0;
+        else if (mx == rm)
+            hue = Mod360(60.0 * ((gm - bm) / (mx - mn)));
+        else if (mx == gm)
+            hue = 60.0 * ((bm - rm) / (mx - mn)) + 120.0;
+        else
+            hue = 60.0 * ((rm - gm) / (mx - mn)) + 240.0;
+        return new PlateColorStats(hue, saturation, mx / 255.0, total);
+    }
+
+    public static (double B, double G, double R)? Tint(LineMask? row)
+    {
+        if (row is null || MedianInk(new[] { row }) is not { } ink)
+            return null;
+        var mx = Math.Max(ink.R, Math.Max(ink.G, ink.B));
+        return mx <= 0 ? null : (ink.B / mx, ink.G / mx, ink.R / mx);
+    }
+
+    public static bool SameTint((double B, double G, double R) a, (double B, double G, double R) b, double tolerance) =>
+        Math.Abs(a.B - b.B) <= tolerance && Math.Abs(a.G - b.G) <= tolerance && Math.Abs(a.R - b.R) <= tolerance;
+
+    private static (double B, double G, double R, int Total)? MedianInk(IEnumerable<LineMask> rows)
+    {
         var all = new List<byte[]>();
         var total = 0;
         foreach (var row in rows)
@@ -82,22 +113,7 @@ public static class PlateColors
             }
         }
 
-        var bm = Median(blue, core);
-        var gm = Median(green, core);
-        var rm = Median(red, core);
-        var mx = Math.Max(rm, Math.Max(gm, bm));
-        var mn = Math.Min(rm, Math.Min(gm, bm));
-        var saturation = mx == 0 ? 0.0 : (mx - mn) / mx;
-        double hue;
-        if (mx == mn)
-            hue = 0.0;
-        else if (mx == rm)
-            hue = Mod360(60.0 * ((gm - bm) / (mx - mn)));
-        else if (mx == gm)
-            hue = 60.0 * ((bm - rm) / (mx - mn)) + 120.0;
-        else
-            hue = 60.0 * ((rm - gm) / (mx - mn)) + 240.0;
-        return new PlateColorStats(hue, saturation, mx / 255.0, total);
+        return (Median(blue, core), Median(green, core), Median(red, core), total);
     }
 
     public static PlateColorReading? Classify(IEnumerable<LineMask> rows, PlateColorSettings? settings = null)

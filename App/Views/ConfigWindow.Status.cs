@@ -172,7 +172,10 @@ public partial class ConfigWindow
             _baseline = Snapshot();
         }
         if (changes.SettingsChanged)
+        {
             LoadSettingsControls();
+            ApplyWindowScale();
+        }
         if (changes.ExclusionsChanged)
         {
             foreach (var row in _players)

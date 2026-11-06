@@ -62,6 +62,8 @@ public sealed record NameplateDetectorSettings
 
     public double RowMinCaps { get; init; } = 11.0;
 
+    public double StackTintTolerance { get; init; } = 0.10;
+
     public double NarrowMinWidth { get; init; } = 6.0;
 
     public double NarrowMaxLines { get; init; } = 2.2;
@@ -121,6 +123,12 @@ public sealed record NameplateDetectorSettings
     public double CyanBlueMin { get; init; } = 150.0;
 
     public double CyanGreenMin { get; init; } = 140.0;
+
+    public const bool WhiteAnyTintEnabled = true;
+
+    public bool WhiteAnyTint { get; init; } = WhiteAnyTintEnabled;
+
+    public double WhiteValueMin { get; init; } = 150.0;
 
     public double RedMin { get; init; } = 140.0;
 
@@ -231,7 +239,7 @@ public sealed record NameplateDetectorSettings
             return "The isolation and pairing numbers must not be negative.";
         if (SpeedJoinGap < 0 || SpeedJoinMaxLines < 0)
             return "The speed group join limits must not be negative.";
-        if (MaxRows < 1 || RowGapMax < 0 || RowPitchMin < 0 || RowPitchMax < RowPitchMin || RowMinCaps < 0)
+        if (MaxRows < 1 || RowGapMax < 0 || RowPitchMin < 0 || RowPitchMax < RowPitchMin || RowMinCaps < 0 || !(StackTintTolerance >= 0))
             return "The row limits are not usable (at least 1 row, positive gap and pitch, maximum pitch at least the minimum).";
         if (NarrowMinWidth < 0 || NarrowMaxLines < 0)
             return "The narrow row limits must not be negative.";

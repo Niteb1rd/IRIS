@@ -19,6 +19,7 @@ public sealed class MiningWorker : IDisposable
     private LabelColours? _colours;
     private readonly FrameAverage _average;
     private readonly DigitEvidence _evidence;
+    private readonly LockGeometry _geometry;
     private int? _lastConfident;
     private double _stateLockedMs = double.NaN;
     private PendingTick? _pending;
@@ -37,6 +38,7 @@ public sealed class MiningWorker : IDisposable
         _stats = stats;
         _average = new FrameAverage(settings.AverageFrames);
         _evidence = new DigitEvidence(settings.FuseReads);
+        _geometry = new LockGeometry(settings);
     }
 
     public ITraceSink? Trace { get; set; }
@@ -110,6 +112,7 @@ public sealed class MiningWorker : IDisposable
             _stateLockedMs = locked.LockedMs;
             _keptText = null;
             ForgetHistory();
+            _geometry.Clear();
         }
 
         var started = Stopwatch.GetTimestamp();
@@ -126,15 +129,20 @@ public sealed class MiningWorker : IDisposable
         var table = _tables?.Current(_clock.NowMs) ?? MiningTable.Embedded;
         var labelBefore = _state.Label;
         var changed = _state.Apply(read, frame.FrameMs, table);
-        var recoloured = !_state.Ended && SignalConfidence.IsConfident(read, _settings.ConfidentMargin) && _colours!.Add(read.TextColour, read.BackColour, _clock.NowMs);
+        var confident = SignalConfidence.IsConfident(read, _settings.ConfidentMargin);
+        var recoloured = !_state.Ended && confident && _colours!.Add(read.TextColour, read.BackColour, _clock.NowMs);
+        var geometry = !_state.Ended && confident && read.State == SignalState.Signal ? _geometry.Add(read.Box, read.RowTop, read.DigitHeight, locked) : null;
         if (Trace.Line(_clock.NowMs, "mng", "read") is { } traced)
             Trace!.Write(traced.Int("seq", frame.Sequence).Num("fms", frame.FrameMs).Num("ms", ms, 2).Str("state", read.State.ToString()).Str("text", read.Text)
                 .Num("off", read.OffsetPx, 1).Num("score", read.MinScore, 3).Num("margin", SignalConfidence.MinMargin(read), 3).Str("src", source)
+                .Num("dh", read.DigitHeight, 1).Num("lockDh", geometry?.DigitHeight ?? locked.DigitHeight, 1)
                 .Str("label", _state.Label).Bool("ended", _state.Ended).Text());
-        if (!changed && !recoloured)
+        if (!changed && !recoloured && geometry is null)
             return;
 
         var next = _state.Ended ? null : locked with { Value = _state.Value, Label = _state.Label, TextColour = _colours!.Text, BackColour = _colours.Back };
+        if (next is not null && geometry is { } g)
+            next = next with { SignalBox = g.Box, RowTop = g.RowTop, DigitHeight = g.DigitHeight };
         Send(new List<IndexUpdate> { new MiningUpdate(PipelineGroup.Mining, frame.FrameMs, snapshot.Epoch, next) }, _clock.NowMs);
         if (next is null || next.Label != labelBefore)
             Changed?.Invoke(read, next);

@@ -3,11 +3,19 @@ using Iris.Core.Pipeline;
 
 namespace Iris.Core.Overlay;
 
+public enum TestOverlayPart
+{
+    Boundary,
+    Panel,
+}
+
 public static class TestOverlayBuilder
 {
     public static readonly IReadOnlyList<string> GenericNames = new[] { "John", "Adam", "Steve", "Mike", "Chris", "David", "Paul", "Mark" };
 
     public static string OrgName(int number) => "COMPANY" + number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    public static string OrgFullName(int number) => "Example Company " + number.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     private static readonly (double X, double Y)[] Jitter =
     {
@@ -18,13 +26,14 @@ public static class TestOverlayBuilder
     private const int Columns = 4;
     private const int Rows = 2;
 
-    public static OverlayModel Build(SocialConfig config, double screenWidth, double screenHeight, TrackingBoundary? boundary = null)
+    public static OverlayModel Build(SocialConfig config, double screenWidth, double screenHeight, TrackingBoundary? boundary = null,
+        TestOverlayPart part = TestOverlayPart.Boundary)
     {
         var area = boundary ?? TrackingBoundary.Default;
         var names = GenericNames.GetEnumerator();
         string NextName() => names.MoveNext() ? names.Current : "Pilot";
 
-        var shown = new SocialConfig { Name = config.Name };
+        var shown = new SocialConfig { Name = config.Name, OrgsMainOrgOnly = config.OrgsMainOrgOnly, OrgRulesMainOrgOnly = config.OrgRulesMainOrgOnly };
         var made = new Dictionary<string, IReadOnlyList<OrgMembership>>(StringComparer.OrdinalIgnoreCase);
         var handles = new List<string>();
 
@@ -42,7 +51,7 @@ public static class TestOverlayBuilder
             var handle = NextName();
             var sid = OrgName(orgNumber);
             shown.Orgs.Add(new OrgEntry(sid, org.Priority, org.Color));
-            made[handle] = new[] { new OrgMembership(sid, true) };
+            made[handle] = new[] { new OrgMembership(sid, true, Name: OrgFullName(orgNumber)) };
             handles.Add(handle);
         }
 
@@ -54,7 +63,7 @@ public static class TestOverlayBuilder
         {
             orgNumber++;
             var handle = NextName();
-            made[handle] = OrgsFor(rule, OrgName(orgNumber));
+            made[handle] = OrgsFor(rule, OrgName(orgNumber), OrgFullName(orgNumber));
             handles.Add(handle);
         }
 
@@ -68,15 +77,18 @@ public static class TestOverlayBuilder
         IReadOnlyList<OrgMembership>? Lookup(string handle) => made.TryGetValue(handle, out var orgs) ? orgs : null;
 
         var model = OverlayModelBuilder.Build(detections, shown, Lookup);
-        return new OverlayModel(model.Brackets, model.Panel, area.ToPixels(screenWidth, screenHeight));
+        return part == TestOverlayPart.Panel
+            ? new OverlayModel(Array.Empty<BracketItem>(), model.Panel)
+            : new OverlayModel(model.Brackets, Array.Empty<PanelEntry>(), area.ToPixels(screenWidth, screenHeight));
     }
 
-    private static IReadOnlyList<OrgMembership> OrgsFor(OrgAttributeRule rule, string sid) => rule.Kind switch
+    private static IReadOnlyList<OrgMembership> OrgsFor(OrgAttributeRule rule, string sid, string name) => rule.Kind switch
     {
         AttributeKind.NoOrg => Array.Empty<OrgMembership>(),
         AttributeKind.Redacted => new[] { new OrgMembership(null, true) },
-        AttributeKind.Archetype => new[] { new OrgMembership(sid, true, rule.Value) },
-        AttributeKind.Activity => new[] { new OrgMembership(sid, true, null, new[] { rule.Value ?? string.Empty }) },
+        AttributeKind.HiddenMainOrg => new[] { new OrgMembership(null, true) },
+        AttributeKind.Archetype => new[] { new OrgMembership(sid, true, rule.Value, Name: name) },
+        AttributeKind.Activity => new[] { new OrgMembership(sid, true, null, new[] { rule.Value ?? string.Empty }, name) },
         _ => Array.Empty<OrgMembership>(),
     };
 

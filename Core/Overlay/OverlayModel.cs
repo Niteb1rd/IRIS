@@ -7,7 +7,7 @@ public sealed record DetectedPlayer(string Handle, PixelRect Box);
 
 public sealed record BracketItem(PixelRect Box, MatchKind Kind, OverlayColor Color, int MarkerId = 0);
 
-public sealed record PanelEntry(string Handle, MatchKind Kind, OverlayColor Color, string OrgsLine);
+public sealed record PanelEntry(string Handle, MatchKind Kind, OverlayColor Color, PanelOrgs Orgs);
 
 public sealed record MiningLabelItem(string Text, PixelRect Signal, double DigitHeight, Bgr TextColour, Bgr BackColour);
 

@@ -371,7 +371,7 @@ public sealed class CacheWorker : IDisposable
             return known.Identity;
         var model = OverlayModelBuilder.Build(new[] { new DetectedPlayer(name, default) }, config, _ => answer.Orgs);
         var bracket = model.Brackets[0];
-        var identity = new MarkerIdentity(name, bracket.Kind, bracket.Color, model.Panel[0].OrgsLine, answer.State);
+        var identity = new MarkerIdentity(name, bracket.Kind, bracket.Color, model.Panel[0].Orgs, answer.State);
         if (_identities.Count >= _live.CacheRemembered)
             _identities.Clear();
         _identities[name] = (answer, identity);

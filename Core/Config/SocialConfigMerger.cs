@@ -24,7 +24,7 @@ public static class SocialConfigMerger
 {
     public static MergeResult Merge(SocialConfig original, SocialConfig imported)
     {
-        var merged = new SocialConfig { Name = original.Name };
+        var merged = new SocialConfig { Name = original.Name, OrgsMainOrgOnly = original.OrgsMainOrgOnly, OrgRulesMainOrgOnly = original.OrgRulesMainOrgOnly };
         var result = new MergeResult(merged);
 
         var handles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

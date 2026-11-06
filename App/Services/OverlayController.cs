@@ -46,6 +46,10 @@ public sealed class OverlayController : IDisposable
     private readonly DispatcherTimer _toastTimer = new() { Interval = TimeSpan.FromSeconds(ToastSeconds) };
     private string? _toastText;
 
+    private readonly TimedOverlayRun _timedRun = new();
+    private readonly DispatcherTimer _timedTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
+    private int _timedShownSeconds = -1;
+
     private OverlayModel? _testModel;
     private PixelRect _testBounds;
     private AppSettings? _testSettings;
@@ -60,6 +64,7 @@ public sealed class OverlayController : IDisposable
         _tracker.Checked += OnGameWindowChecked;
         _testTimer.Tick += OnTestTick;
         _toastTimer.Tick += OnToastTick;
+        _timedTimer.Tick += OnTimedTick;
         services.SettingsApplied += OnSettingsApplied;
         Hotkeys = new HotkeyManager(services.Log, services.Clock);
         Hotkeys.Pressed += OnHotkeyPressed;
@@ -78,6 +83,8 @@ public sealed class OverlayController : IDisposable
     }
 
     public bool IsTestRunning => _testModel is not null;
+
+    public TestOverlayPart TestPart { get; private set; }
 
     public int TestSecondsLeft
     {
@@ -147,12 +154,14 @@ public sealed class OverlayController : IDisposable
         foreach (var item in model.Brackets)
             t.Item().Int("mid", item.MarkerId).Box("b", item.Box);
         t.EndArray().Array("markers");
+        var withheld = IndexModel.WithheldDuplicates(snapshot.Markers);
         foreach (var marker in snapshot.Markers)
         {
             if (marker.Status != PlateStatus.Confirmed)
                 continue;
             var (cx, top) = IndexModel.PositionAt(marker, snapshot, at, _pipeSettings, _liveSettings);
-            var state = !IndexModel.IsListed(marker) ? "notListed" : !marker.HasTrackingFix ? "noFix" : !IndexModel.IsDrawable(marker, at, _pipeSettings) ? "stale" : "drawnOrOutside";
+            var state = !IndexModel.IsListed(marker) ? "notListed" : !marker.HasTrackingFix ? "noFix" : !IndexModel.IsDrawable(marker, at, _pipeSettings) ? "stale"
+                : (withheld is not null && withheld.Contains(marker.Id)) ? "duplicateName" : "drawnOrOutside";
             t.Item().Int("mid", marker.Id).Str("name", marker.Name).Str("state", state).Num("age", at - marker.LastFoundMs, 1).Int("missed", marker.MissedFrames).Num("lineMs", marker.LineMs)
                 .Num("shiftX", cx - marker.CentreX, 1).Num("shiftY", top - marker.Top, 1).Str("rsi", marker.Identity?.Rsi.ToString());
         }
@@ -195,7 +204,69 @@ public sealed class OverlayController : IDisposable
 
     public void ToggleFromTray(HotkeyAction action) => Toggle(action, announce: false);
 
-    private void OnHotkeyPressed(object? sender, HotkeyAction action) => Toggle(action, announce: true);
+    private void OnHotkeyPressed(object? sender, HotkeyAction action)
+    {
+        if (action == HotkeyAction.TimedOverlay)
+            PressTimedOverlay();
+        else
+            Toggle(action, announce: true);
+    }
+
+    private void PressTimedOverlay()
+    {
+        var settings = _services.Settings;
+        var press = _timedRun.Press(settings.OverlayDisabled, settings.TimedOverlaySeconds, Environment.TickCount64);
+        if (press == TimedOverlayPress.Ignored)
+            return;
+
+        _toastText = null;
+        _toastTimer.Stop();
+        _timedShownSeconds = -1;
+        _timedTimer.Stop();
+        _timedTimer.Start();
+        if (press == TimedOverlayPress.Started)
+        {
+            _services.Log.Write(_services.Clock.UtcNow, $"Overlay on for {settings.TimedOverlaySeconds} seconds (hotkey; not saved)");
+            _services.SetTimedOverlay(true);
+        }
+        Evaluate();
+    }
+
+    private void OnTimedTick(object? sender, EventArgs e)
+    {
+        var now = Environment.TickCount64;
+        if (_timedRun.Expire(now))
+        {
+            EndTimedRun(expired: true);
+            return;
+        }
+
+        var left = _timedRun.SecondsLeft(now);
+        if (left != _timedShownSeconds)
+            Evaluate();
+    }
+
+    private void EndTimedRun(bool expired)
+    {
+        _timedRun.Stop();
+        _timedTimer.Stop();
+        _timedShownSeconds = -1;
+        if (!_services.IsTimedOverlayOn)
+            return;
+        _services.Log.Write(_services.Clock.UtcNow, expired ? "Timed overlay ended (overlay off again)" : "Timed overlay ended (overlay now on)");
+        if (expired && _services.Settings.OverlayDisabled && _testModel is null && _tracker.Current.State == GameWindowState.Ready)
+            ShowToast("Overlay OFF");
+        _services.SetTimedOverlay(false);
+        Evaluate();
+    }
+
+    private string? TimedOverlayText()
+    {
+        if (!_timedRun.IsActive)
+            return null;
+        _timedShownSeconds = _timedRun.SecondsLeft(Environment.TickCount64);
+        return TimedOverlayRun.CountdownText(_timedShownSeconds);
+    }
 
     private void Toggle(HotkeyAction action, bool announce)
     {
@@ -209,7 +280,7 @@ public sealed class OverlayController : IDisposable
         if (action == HotkeyAction.ToggleOverlay)
         {
             var disable = !settings.OverlayDisabled;
-            text = disable ? "Overlay off" : "Overlay on";
+            text = disable ? "Overlay OFF" : "Overlay ON";
             if (onScreen)
                 ShowToast(text);
             var saved = _services.SetOverlayDisabled(disable);
@@ -219,11 +290,13 @@ public sealed class OverlayController : IDisposable
                 _services.Log.Write(_services.Clock.UtcNow, "Could not save the setting: " + saved.Error);
                 return;
             }
+            if (!disable)
+                EndTimedRun(expired: false);
         }
         else
         {
             var enable = !settings.PanelEnabled;
-            text = enable ? "Info panel on" : "Info panel off";
+            text = enable ? "Info panel ON" : "Info panel OFF";
             if (onScreen)
                 ShowToast(text);
             var saved = _services.SetPanelEnabled(enable);
@@ -254,8 +327,9 @@ public sealed class OverlayController : IDisposable
 
     private void OnToastTick(object? sender, EventArgs e) => ClearToast();
 
-    public string StartTest(AppSettings settings, Window anchor)
+    public string StartTest(AppSettings settings, Window anchor, TestOverlayPart part)
     {
+        TestPart = part;
         string where;
         if (_tracker.TryFindGameWindow(out var gameBounds))
         {
@@ -305,7 +379,7 @@ public sealed class OverlayController : IDisposable
     }
 
     private OverlayModel BuildTestModel(AppSettings settings) =>
-        TestOverlayBuilder.Build(_services.CurrentConfig, _testBounds.Width, _testBounds.Height, TrackingBoundary.From(settings));
+        TestOverlayBuilder.Build(_services.CurrentConfig, _testBounds.Width, _testBounds.Height, TrackingBoundary.From(settings), TestPart);
 
     private void OnTestTick(object? sender, EventArgs e)
     {
@@ -354,6 +428,8 @@ public sealed class OverlayController : IDisposable
         _bracketRenderer?.SetVisibleInCapture(visibleInCapture);
         if (_testSettings is not null)
             _testSettings = _testSettings with { PanelEnabled = _services.Settings.PanelEnabled };
+        if (_timedRun.IsActive && !_services.Settings.OverlayDisabled)
+            EndTimedRun(expired: false);
         Evaluate();
     }
 
@@ -378,7 +454,9 @@ public sealed class OverlayController : IDisposable
         _liveModel = ModelAtNow(_liveModel, DisplayTiming.RefreshPeriodMs(snapshot.Handle));
         var settings = _services.Settings;
         var ready = snapshot.State == GameWindowState.Ready;
-        SetGate(ready && !settings.OverlayDisabled ? new CaptureGate(true, snapshot.Bounds, snapshot.Handle) : CaptureGate.Off);
+        var disabled = _services.IsOverlayDisabled;
+        SetGate(ready && !disabled ? new CaptureGate(true, snapshot.Bounds, snapshot.Handle) : CaptureGate.Off);
+        var toast = _toastText ?? TimedOverlayText();
 
         if (!ready)
         {
@@ -386,14 +464,14 @@ public sealed class OverlayController : IDisposable
             return;
         }
 
-        if (settings.OverlayDisabled)
+        if (disabled)
         {
             _bracketRenderer?.Hide();
             _miningWindow?.HideOverlay();
-            if (_toastText is null)
+            if (toast is null)
                 _panelWindow?.HideOverlay();
             else
-                EnsurePanelWindow().Present(OverlayModel.Empty, snapshot.Bounds, settings, _toastText);
+                EnsurePanelWindow().Present(OverlayModel.Empty, snapshot.Bounds, settings, toast);
             return;
         }
 
@@ -404,8 +482,8 @@ public sealed class OverlayController : IDisposable
         else
             _bracketRenderer?.Hide();
 
-        if (_toastText is not null || (settings.PanelEnabled && (liveModel.Panel.Count > 0 || liveModel.Note is not null)))
-            EnsurePanelWindow().Present(liveModel, snapshot.Bounds, settings, _toastText);
+        if (toast is not null || (settings.PanelEnabled && (liveModel.Panel.Count > 0 || liveModel.Note is not null)))
+            EnsurePanelWindow().Present(liveModel, snapshot.Bounds, settings, toast);
         else
             _panelWindow?.HideOverlay();
 
@@ -452,6 +530,8 @@ public sealed class OverlayController : IDisposable
         Hotkeys.Dispose();
         _toastTimer.Stop();
         _toastTimer.Tick -= OnToastTick;
+        _timedTimer.Stop();
+        _timedTimer.Tick -= OnTimedTick;
         _tracker.Changed -= OnGameWindowChanged;
         _tracker.Checked -= OnGameWindowChecked;
         PromptDialog.CloseNotice();

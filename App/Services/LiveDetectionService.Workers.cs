@@ -396,7 +396,7 @@ public sealed partial class LiveDetectionService
         }
     }
 
-    private bool MiningEnabled => !_services.Settings.OverlayDisabled && _services.Settings.PanelEnabled;
+    private bool MiningEnabled => !_services.IsOverlayDisabled && _services.Settings.PanelEnabled && !_services.Settings.MiningDisabled;
 
     private void MiningLoop()
     {

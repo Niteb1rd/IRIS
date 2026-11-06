@@ -78,6 +78,7 @@ public static class PlayerOrgsParser
             return new OrgMembership(null, isMain);
 
         var sid = SidFromLabel(block) ?? SidFromLink(block);
+        var name = NameFromLink(block);
 
         if (sid is null)
         {
@@ -94,11 +95,11 @@ public static class PlayerOrgsParser
             var affiliateArchetype = ValueForLabel(block, ArchetypeLabel);
             var affiliateActivities = ValuesForLabel(block, ActivityLabel);
             if (affiliateArchetype is null && affiliateActivities.Count == 0)
-                return new OrgMembership(sid, false);
+                return new OrgMembership(sid, false, Name: name);
             return new OrgMembership(
                 sid, false,
                 affiliateArchetype is null ? null : (OrgVocabulary.MatchArchetype(affiliateArchetype) ?? affiliateArchetype),
-                affiliateActivities);
+                affiliateActivities, name);
         }
 
         var labeled = ValueForLabel(block, ArchetypeLabel);
@@ -106,7 +107,18 @@ public static class PlayerOrgsParser
         var scan = OrgAttributeScanner.Scan(block);
         var archetype = labeled is null ? scan.Archetype : (OrgVocabulary.MatchArchetype(labeled) ?? labeled);
         IReadOnlyList<string> activities = labeledActivities.Count > 0 ? labeledActivities : scan.Activities;
-        return new OrgMembership(sid, true, archetype, activities);
+        return new OrgMembership(sid, true, archetype, activities, name);
+    }
+
+    private static string? NameFromLink(IElement block)
+    {
+        foreach (var link in block.QuerySelectorAll(OrgLinkSelector))
+        {
+            var text = HtmlText.Of(link);
+            if (text.Length > 0)
+                return text;
+        }
+        return null;
     }
 
     private static string? SidFromLabel(IElement block)

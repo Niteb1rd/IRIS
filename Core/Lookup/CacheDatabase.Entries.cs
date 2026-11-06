@@ -39,7 +39,8 @@ public sealed partial class CacheDatabase
 
         var orgs = new List<OrgMembership>();
         using (var command = Command(
-                   "SELECT sid, is_main, archetype, activities FROM player_orgs WHERE handle = $handle ORDER BY position",
+                   "SELECT p.sid, p.is_main, p.archetype, p.activities, COALESCE(p.name, o.long_name) FROM player_orgs p "
+                   + "LEFT JOIN orgs o ON o.sid = p.sid WHERE p.handle = $handle ORDER BY p.position",
                    ("$handle", handle)))
         using (var reader = command.ExecuteReader())
         {
@@ -49,7 +50,8 @@ public sealed partial class CacheDatabase
                 bool isMain = reader.GetInt32(1) != 0;
                 string? archetype = reader.IsDBNull(2) ? null : reader.GetString(2);
                 var activities = SplitActivities(reader.GetString(3));
-                orgs.Add(new OrgMembership(sid, isMain, archetype, activities));
+                string? name = reader.IsDBNull(4) ? null : reader.GetString(4);
+                orgs.Add(new OrgMembership(sid, isMain, archetype, activities, name));
             }
         }
 
@@ -59,6 +61,7 @@ public sealed partial class CacheDatabase
     public void SavePlayer(PlayerOrgs player, CacheSource source, DateTimeOffset now)
     {
         var effective = source;
+        var names = new string?[player.Orgs.Count];
         InTransaction(() =>
         {
             var existing = ScalarText("SELECT source FROM players WHERE handle = $handle", ("$handle", player.Handle));
@@ -73,13 +76,17 @@ public sealed partial class CacheDatabase
                 ("$handle", player.Handle), ("$source", CacheSources.ToDb(effective)), ("$time", time));
 
             using var insert = Command(
-                "INSERT INTO player_orgs (handle, position, sid, is_main, archetype, activities, last_refreshed) "
-                + "VALUES ($handle, $position, $sid, $main, $archetype, $activities, $time)",
+                "INSERT INTO player_orgs (handle, position, sid, is_main, archetype, activities, last_refreshed, name) "
+                + "VALUES ($handle, $position, $sid, $main, $archetype, $activities, $time, $name)",
                 ("$handle", player.Handle), ("$position", 0), ("$sid", null), ("$main", 0), ("$archetype", null),
-                ("$activities", ""), ("$time", time));
+                ("$activities", ""), ("$time", time), ("$name", null));
             int position = 0;
             foreach (var org in player.Orgs)
             {
+                names[position] = org.Name is { Length: > 0 } || org.Sid is null
+                    ? org.Name
+                    : ScalarText("SELECT long_name FROM orgs WHERE sid = $sid", ("$sid", org.Sid));
+                insert.Parameters["$name"].Value = (object?)names[position] ?? DBNull.Value;
                 insert.Parameters["$position"].Value = position;
                 insert.Parameters["$sid"].Value = (object?)org.Sid ?? DBNull.Value;
                 insert.Parameters["$main"].Value = org.IsMain ? 1 : 0;
@@ -92,7 +99,7 @@ public sealed partial class CacheDatabase
         afterCommit: () =>
         {
             var orgs = player.Orgs
-                .Select(o => new OrgMembership(o.Sid, o.IsMain, o.Archetype, SplitActivities(JoinActivities(o.ActivityList))))
+                .Select((o, i) => new OrgMembership(o.Sid, o.IsMain, o.Archetype, SplitActivities(JoinActivities(o.ActivityList)), names[i]))
                 .ToList();
             Remember(PlayerKey(player.Handle), new CachedPlayer(player.Handle, orgs, effective, ParseTime(FormatTime(now))));
             ForgetNote(NotFoundKind.Player, player.Handle);

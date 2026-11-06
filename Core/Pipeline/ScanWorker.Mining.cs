@@ -30,12 +30,12 @@ public sealed partial class ScanWorker
         if (Mining is null || snapshot.Mining is not null || region.Image.Empty())
             return;
         var started = Stopwatch.GetTimestamp();
-        var read = Mining.Read(region.Image, region.Region, frame.WindowWidth, frame.WindowHeight);
+        var read = Mining.Search(region.Image, region.Region, frame.WindowWidth, frame.WindowHeight);
         var ms = (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
         _stats?.AddMiningSearch(ms);
         if (Trace.Line(_clock.NowMs, "scn", "mining") is { } traced)
             Trace!.Write(traced.Int("seq", frame.Sequence).Num("fms", frame.FrameMs).Num("ms", ms, 2).Str("state", read.State.ToString()).Str("text", read.Text)
-                .Num("off", read.OffsetPx, 1).Num("score", read.MinScore, 3).Text());
+                .Num("off", read.OffsetPx, 1).Num("score", read.MinScore, 3).Num("dh", read.DigitHeight, 1).Num("rowTop", read.RowTop, 1).Text());
         if (!read.Found)
             return;
         var table = MiningTables?.Current(_clock.NowMs) ?? MiningTable.Embedded;

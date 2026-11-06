@@ -20,11 +20,31 @@ public sealed record MiningSettings
 
     public int FuseReads { get; init; } = 5;
 
+    public int GeometryReads { get; init; } = 5;
+
+    public int GeometryMinReads { get; init; } = 3;
+
+    public double GeometryChangePx { get; init; } = 1.0;
+
     public double LineHeightAt1440 { get; init; } = 12.0;
 
     public double RowCentreY { get; init; } = 472.0;
 
-    public double SearchHalfHeightLines { get; init; } = 4.0;
+    public double SearchAboveLines { get; init; } = 4.0;
+
+    public double SearchBelowLines { get; init; } = 11.0;
+
+    public double RowSearchHalfLines { get; init; } = 4.0;
+
+    public int PinHeightMin { get; init; } = 13;
+
+    public int PinHeightMax { get; init; } = 26;
+
+    public double PinMinScore { get; init; } = 0.7;
+
+    public double PinDigitRatio { get; init; } = 0.5;
+
+    public double SmallRowLines { get; init; } = 0.75;
 
     public double LockAboveLines { get; init; } = 1.5;
 
@@ -43,6 +63,8 @@ public sealed record MiningSettings
     public double TieMargin { get; init; } = 0.08;
 
     public double SplitWidthLines { get; init; } = 0.8;
+
+    public double SplitWholeMaxLines { get; init; } = 1.05;
 
     public double MinInkThreshold { get; init; } = 12.0;
 

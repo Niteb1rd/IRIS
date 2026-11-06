@@ -25,6 +25,8 @@ public interface IPlateImageOps
 {
     ScanParts? LastScanParts => null;
 
+    IReadOnlyCollection<PixelRect> LastScanSpeedGroups => Array.Empty<PixelRect>();
+
     IReadOnlyList<PixelRect> Scan(CropImage scan);
 
     IReadOnlyList<PixelRect> Scan(CropImage scan, Func<PixelRect, bool>? isTracked) => Scan(scan);
@@ -71,16 +73,24 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
     {
         var origin = scan.Origin;
         var found = new List<PixelRect>();
+        var foundSpeedGroups = new HashSet<PixelRect>();
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var candidates = _scanDetector.FindCandidates(scan.Image);
         var candidatesMs = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         var maskMs = _scanDetector.LastMaskMs;
         var boxes = candidates.Boxes;
         var memo = new Dictionary<int, bool>();
+        var speedGroups = new HashSet<int>();
         bool DistanceOk(int line)
         {
             if (!memo.TryGetValue(line, out var ok))
-                memo[line] = ok = ReadsAsDistance(scan.Image, boxes[line]);
+            {
+                var reading = ReadsAsDistance(scan.Image, boxes[line]);
+                memo[line] = ok = reading is not null;
+                if (reading is { HasSpeedGroup: true })
+                    speedGroups.Add(line);
+            }
+
             return ok;
         }
 
@@ -154,30 +164,36 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
             {
                 taken.Add(bottom);
                 var box = boxes[bottom];
-                found.Add(new PixelRect(box.X + origin.X, box.Y + origin.Y, box.Width, box.Height));
+                var rect = new PixelRect(box.X + origin.X, box.Y + origin.Y, box.Width, box.Height);
+                found.Add(rect);
+                if (speedGroups.Contains(bottom))
+                    foundSpeedGroups.Add(rect);
             }
         }
 
+        LastScanSpeedGroups = foundSpeedGroups;
         LastScanParts = new ScanParts(maskMs, candidatesMs - maskMs, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds - candidatesMs);
         return found;
     }
 
     public ScanParts? LastScanParts { get; private set; }
 
-    private bool ReadsAsDistance(Mat image, Rect box)
+    public IReadOnlyCollection<PixelRect> LastScanSpeedGroups { get; private set; } = Array.Empty<PixelRect>();
+
+    private DistanceReading? ReadsAsDistance(Mat image, Rect box)
     {
         if (image.Channels() != 4)
-            return _scanDetector.ReadDistanceLine(image, box) is not null;
+            return _scanDetector.ReadDistanceLine(image, box);
         const int pad = 2;
         var x0 = Math.Max(0, box.X - pad);
         var y0 = Math.Max(0, box.Y - pad);
         var x1 = Math.Min(image.Width, box.X + box.Width + pad);
         var y1 = Math.Min(image.Height, box.Y + box.Height + pad);
         if (x1 <= x0 || y1 <= y0)
-            return false;
+            return null;
         using var area = new Mat(image, new Rect(x0, y0, x1 - x0, y1 - y0));
         Cv2.CvtColor(area, _bgrBox, ColorConversionCodes.BGRA2BGR);
-        return _scanDetector.ReadDistanceLine(_bgrBox, new Rect(box.X - x0, box.Y - y0, box.Width, box.Height)) is not null;
+        return _scanDetector.ReadDistanceLine(_bgrBox, new Rect(box.X - x0, box.Y - y0, box.Width, box.Height));
     }
 
     public PixelRect? Check(CheckItem item)
@@ -366,25 +382,38 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
         var nameRead = _cropDetector.ReadNameRow(image, nameBox);
         if (nameRead.Text.Length == 0 || !nameRead.OneWord)
             return Bad(nameRead);
-        var reads = new List<NameRowRead>(rows.Count);
-        var allWords = true;
-        foreach (var row in rows)
+
+        var tint = PlateColors.Tint(nameRead.Mask);
+        var above = rows.Where(r => r != nameBox).OrderByDescending(r => r.Y).ToList();
+        var keptRows = new List<Rect> { nameBox };
+        var reads = new List<NameRowRead> { nameRead };
+        var whole = above.Count == rows.Count - 1;
+        foreach (var row in above)
         {
-            var read = row == nameBox ? nameRead : _cropDetector.ReadNameRow(image, row);
-            reads.Add(read);
-            if (read.Text.Length == 0 || !read.OneWord)
+            var read = _cropDetector.ReadNameRow(image, row);
+            if (tint is { } nameTint && PlateColors.Tint(read.Mask) is { } rowTint && !PlateColors.SameTint(nameTint, rowTint, _cropSettings.StackTintTolerance))
             {
-                allWords = false;
+                whole = false;
                 break;
             }
+
+            if (read.Text.Length == 0)
+            {
+                keptRows = new List<Rect> { nameBox };
+                reads = new List<NameRowRead> { nameRead };
+                whole = false;
+                break;
+            }
+
+            if (!read.OneWord)
+                return new ReadResult(ObservationClass.Unclear, "multiword");
+            keptRows.Insert(0, row);
+            reads.Insert(0, read);
         }
 
-        if (!allWords)
-        {
-            rows = new[] { nameBox };
+        rows = keptRows;
+        if (!whole)
             blockers = Array.Empty<Rect>();
-            reads = new List<NameRowRead> { nameRead };
-        }
 
         var text = string.Concat(reads.Select(r => r.Text));
         if (reads.Any(r => !r.ValidChars))

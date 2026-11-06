@@ -3,14 +3,21 @@ using System.Globalization;
 using System.Windows.Data;
 using System.Windows.Media;
 using Iris.Core.Config;
+using Iris.Core.Overlay;
 
 namespace Iris.App.Views;
 
 public sealed class OverlayColorToBrushConverter : IValueConverter
 {
+    private const byte GameBackgroundR = 0x14;
+    private const byte GameBackgroundG = 0x16;
+    private const byte GameBackgroundB = 0x1C;
+
+    private static readonly Brush[] Swatches = MakeSwatches();
+
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
     {
-        return value is OverlayColor color ? BrushFor(color) : Brushes.Transparent;
+        return value is OverlayColor color && (int)color >= 0 && (int)color < Swatches.Length ? Swatches[(int)color] : Brushes.Transparent;
     }
 
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
@@ -18,57 +25,19 @@ public sealed class OverlayColorToBrushConverter : IValueConverter
         throw new NotSupportedException();
     }
 
-    public static Brush BrushFor(OverlayColor color) => color switch
+    private static Brush[] MakeSwatches()
     {
-        OverlayColor.Red => Frozen(0xE5, 0x39, 0x35),
-        OverlayColor.Orange => Frozen(0xFB, 0x8C, 0x00),
-        OverlayColor.Yellow => Frozen(0xFD, 0xD8, 0x35),
-        OverlayColor.Green => Frozen(0x43, 0xA0, 0x47),
-        OverlayColor.Cyan => Frozen(0x00, 0xAC, 0xC1),
-        OverlayColor.Blue => Frozen(0x1E, 0x88, 0xE5),
-        OverlayColor.Magenta => Frozen(0xE0, 0x40, 0xC8),
-        OverlayColor.Purple => Frozen(0x8E, 0x24, 0xAA),
-        _ => Brushes.Gray,
-    };
-
-    private static Brush Frozen(byte r, byte g, byte b)
-    {
-        var brush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(r, g, b));
-        brush.Freeze();
-        return brush;
-    }
-}
-
-public sealed class StatusKindToBrushConverter : IValueConverter
-{
-    private static readonly Brush Green = Make(0x2E, 0x7D, 0x32);
-    private static readonly Brush Red = Make(0xC6, 0x28, 0x28);
-    private static readonly Brush Amber = Make(0xB2, 0x6A, 0x00);
-    private static readonly Brush Grey = Make(0x61, 0x61, 0x61);
-
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
-    {
-        if (value is not RowStatusKind kind)
-            return Grey;
-        return kind switch
+        var swatches = new Brush[Enum.GetValues<OverlayColor>().Length];
+        foreach (var color in Enum.GetValues<OverlayColor>())
         {
-            RowStatusKind.Valid => Green,
-            RowStatusKind.NotFound => Red,
-            RowStatusKind.Invalid => Red,
-            RowStatusKind.Failed => Amber,
-            _ => Grey,
-        };
+            var (r, g, b) = OverlayPalette.Rgb(color);
+            var brush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(Blend(r, GameBackgroundR), Blend(g, GameBackgroundG), Blend(b, GameBackgroundB)));
+            brush.Freeze();
+            swatches[(int)color] = brush;
+        }
+        return swatches;
     }
 
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
-    }
-
-    private static Brush Make(byte r, byte g, byte b)
-    {
-        var brush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(r, g, b));
-        brush.Freeze();
-        return brush;
-    }
+    private static byte Blend(byte colour, byte background) =>
+        (byte)Math.Round(colour * BracketRasterizer.Opacity + background * (1 - BracketRasterizer.Opacity));
 }

@@ -23,7 +23,9 @@ public sealed class PlateMasker : IDisposable
     private readonly Mat _red = new();
     private readonly Mat _hat = new();
     private readonly Mat _scratch = new();
-    private readonly Mat _cyanWhite = new();
+    private readonly Mat _value = new();
+    private readonly Mat _rule = new();
+    private readonly Mat _white = new();
     private readonly Mat _redMask = new();
     private readonly Mat _greenMask = new();
     private bool _disposed;
@@ -44,8 +46,8 @@ public sealed class PlateMasker : IDisposable
         switch (cls)
         {
             case PlateColorClass.CyanWhite:
-                BuildCyanWhite(kernel);
-                _cyanWhite.CopyTo(dst);
+                BuildWhite(kernel);
+                _white.CopyTo(dst);
                 break;
             case PlateColorClass.Red:
                 BuildRed(kernel);
@@ -56,10 +58,10 @@ public sealed class PlateMasker : IDisposable
                 _greenMask.CopyTo(dst);
                 break;
             default:
-                BuildCyanWhite(kernel);
+                BuildWhite(kernel);
                 BuildRed(kernel);
                 BuildGreen(kernel);
-                Cv2.BitwiseOr(_cyanWhite, _redMask, dst);
+                Cv2.BitwiseOr(_white, _redMask, dst);
                 Cv2.BitwiseOr(dst, _greenMask, dst);
                 break;
         }
@@ -70,7 +72,7 @@ public sealed class PlateMasker : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         Split(bgr);
         var kernel = Kernel(KernelSize(scaleHeight));
-        BuildCyanWhite(kernel);
+        BuildWhite(kernel);
         BuildRed(kernel);
         BuildGreen(kernel);
 
@@ -85,7 +87,7 @@ public sealed class PlateMasker : IDisposable
             return Cv2.CountNonZero(part);
         }
 
-        var cyan = Count(_cyanWhite);
+        var cyan = Count(_white);
         var red = Count(_redMask);
         var green = Count(_greenMask);
         var best = Math.Max(cyan, Math.Max(red, green));
@@ -102,7 +104,7 @@ public sealed class PlateMasker : IDisposable
         if (_disposed)
             return;
         _disposed = true;
-        foreach (var mat in new[] { _blue, _green, _red, _hat, _scratch, _cyanWhite, _redMask, _greenMask })
+        foreach (var mat in new[] { _blue, _green, _red, _hat, _scratch, _value, _rule, _white, _redMask, _greenMask })
             mat.Dispose();
         foreach (var kernel in _kernels.Values)
             kernel.Dispose();
@@ -139,44 +141,55 @@ public sealed class PlateMasker : IDisposable
     }
 
 
-    private void BuildCyanWhite(Mat kernel)
+    private void BuildWhite(Mat kernel)
     {
-        Cv2.MorphologyEx(_blue, _hat, MorphTypes.TopHat, kernel);
-        Cv2.Threshold(_hat, _cyanWhite, _settings.TopHatMin, 255, ThresholdTypes.Binary);
-        Cv2.Threshold(_blue, _scratch, _settings.CyanBlueMin, 255, ThresholdTypes.Binary);
-        Cv2.BitwiseAnd(_cyanWhite, _scratch, _cyanWhite);
-        Cv2.Threshold(_green, _scratch, _settings.CyanGreenMin, 255, ThresholdTypes.Binary);
-        Cv2.BitwiseAnd(_cyanWhite, _scratch, _cyanWhite);
-        Cv2.Subtract(_red, _blue, _scratch);
-        Cv2.Threshold(_scratch, _scratch, 0, 255, ThresholdTypes.BinaryInv);
-        Cv2.BitwiseAnd(_cyanWhite, _scratch, _cyanWhite);
+        Cv2.Max(_blue, _green, _value);
+        Cv2.Max(_value, _red, _value);
+        Cv2.MorphologyEx(_value, _hat, MorphTypes.TopHat, kernel);
+        Cv2.Threshold(_hat, _white, _settings.TopHatMin, 255, ThresholdTypes.Binary);
+        Cv2.Threshold(_value, _scratch, _settings.WhiteValueMin, 255, ThresholdTypes.Binary);
+        Cv2.BitwiseAnd(_white, _scratch, _white);
+        RedRule(_rule);
+        Cv2.Subtract(_white, _rule, _white);
+        GreenRule(_rule);
+        Cv2.Subtract(_white, _rule, _white);
     }
 
     private void BuildRed(Mat kernel)
     {
         Cv2.MorphologyEx(_red, _hat, MorphTypes.TopHat, kernel);
         Cv2.Threshold(_hat, _redMask, _settings.TopHatMin, 255, ThresholdTypes.Binary);
-        Cv2.Threshold(_red, _scratch, _settings.RedMin, 255, ThresholdTypes.Binary);
-        Cv2.BitwiseAnd(_redMask, _scratch, _redMask);
-        Cv2.Subtract(_red, _green, _scratch);
-        Cv2.Threshold(_scratch, _scratch, _settings.RedOverGreenMin, 255, ThresholdTypes.Binary);
-        Cv2.BitwiseAnd(_redMask, _scratch, _redMask);
-        Cv2.Subtract(_red, _blue, _scratch);
-        Cv2.Threshold(_scratch, _scratch, _settings.RedOverBlueMin, 255, ThresholdTypes.Binary);
-        Cv2.BitwiseAnd(_redMask, _scratch, _redMask);
+        RedRule(_rule);
+        Cv2.BitwiseAnd(_redMask, _rule, _redMask);
     }
 
     private void BuildGreen(Mat kernel)
     {
         Cv2.MorphologyEx(_green, _hat, MorphTypes.TopHat, kernel);
         Cv2.Threshold(_hat, _greenMask, _settings.GreenTopHatMin, 255, ThresholdTypes.Binary);
-        Cv2.Threshold(_green, _scratch, _settings.GreenMin, 255, ThresholdTypes.Binary);
-        Cv2.BitwiseAnd(_greenMask, _scratch, _greenMask);
+        GreenRule(_rule);
+        Cv2.BitwiseAnd(_greenMask, _rule, _greenMask);
+    }
+
+    private void RedRule(Mat dst)
+    {
+        Cv2.Threshold(_red, dst, _settings.RedMin, 255, ThresholdTypes.Binary);
+        Cv2.Subtract(_red, _green, _scratch);
+        Cv2.Threshold(_scratch, _scratch, _settings.RedOverGreenMin, 255, ThresholdTypes.Binary);
+        Cv2.BitwiseAnd(dst, _scratch, dst);
+        Cv2.Subtract(_red, _blue, _scratch);
+        Cv2.Threshold(_scratch, _scratch, _settings.RedOverBlueMin, 255, ThresholdTypes.Binary);
+        Cv2.BitwiseAnd(dst, _scratch, dst);
+    }
+
+    private void GreenRule(Mat dst)
+    {
+        Cv2.Threshold(_green, dst, _settings.GreenMin, 255, ThresholdTypes.Binary);
         Cv2.Subtract(_green, _red, _scratch);
         Cv2.Threshold(_scratch, _scratch, _settings.GreenOverRedMin, 255, ThresholdTypes.Binary);
-        Cv2.BitwiseAnd(_greenMask, _scratch, _greenMask);
+        Cv2.BitwiseAnd(dst, _scratch, dst);
         Cv2.Subtract(_green, _blue, _scratch);
         Cv2.Threshold(_scratch, _scratch, _settings.GreenOverBlueMin, 255, ThresholdTypes.Binary);
-        Cv2.BitwiseAnd(_greenMask, _scratch, _greenMask);
+        Cv2.BitwiseAnd(dst, _scratch, dst);
     }
 }

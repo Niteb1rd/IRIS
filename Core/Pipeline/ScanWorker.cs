@@ -217,11 +217,12 @@ public sealed partial class ScanWorker : IDisposable
             traced?.Int("seq", frame.Sequence).Num("fms", frameMs).Int("tick", pending.Tag).Num("ms", scanMs, 1)
                 .Num("maskMs", parts?.MaskMs ?? double.NaN, 1).Num("linesMs", parts?.LinesMs ?? double.NaN, 1).Num("readsMs", parts?.DistanceReadsMs ?? double.NaN, 1)
                 .Int("found", lines.Count).Array("new");
+            var speedGroups = Ops.LastScanSpeedGroups;
             foreach (var line in lines)
             {
                 if (IsTrackedLine(line, snapshot, frameMs))
                     continue;
-                updates.Add(new NewMarkerUpdate(PipelineGroup.Scan, frameMs, epoch, line, FirstRequest(line, frameMs, snapshot, env, nowMs)));
+                updates.Add(new NewMarkerUpdate(PipelineGroup.Scan, frameMs, epoch, line, FirstRequest(line, frameMs, snapshot, env, nowMs), speedGroups.Contains(line)));
                 traced?.Item().Box("b", line);
             }
 

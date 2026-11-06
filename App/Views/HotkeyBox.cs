@@ -2,7 +2,6 @@ using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media;
 using Iris.App.Services;
 using Iris.Core.Config;
 
@@ -166,17 +165,17 @@ public sealed class HotkeyBox : TextBox
         if (_capturing)
         {
             Text = _problem ?? CapturingText;
-            Foreground = _problem is null ? SystemColors.ControlTextBrush : Brushes.Firebrick;
+            SetResourceReference(ForegroundProperty, _problem is null ? "Iris.Text" : "Iris.Error");
         }
         else if (_value.Length == 0)
         {
             Text = NoneText;
-            Foreground = SystemColors.GrayTextBrush;
+            SetResourceReference(ForegroundProperty, "Iris.Hint");
         }
         else
         {
             Text = _value;
-            Foreground = SystemColors.ControlTextBrush;
+            SetResourceReference(ForegroundProperty, "Iris.Text");
         }
     }
 }

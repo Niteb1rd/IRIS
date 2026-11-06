@@ -61,12 +61,24 @@ public sealed partial class AppServices
             Log.Write(Clock.UtcNow, "Log file switched on (setting)");
 
         CacheSettings.TtlDays = ttl;
-        var disabledChanged = Settings.OverlayDisabled != settings.OverlayDisabled;
+        var savedChanged = Settings.OverlayDisabled != settings.OverlayDisabled;
+        var wasDisabled = IsOverlayDisabled;
         Settings = settings;
-        if (disabledChanged)
+        var disabledChanged = wasDisabled != IsOverlayDisabled;
+        if (savedChanged)
             Log.Write(Clock.UtcNow, settings.OverlayDisabled ? "Overlay disabled (screen reading stopped)" : "Overlay enabled");
         SettingsApplied?.Invoke(this, EventArgs.Empty);
         if (disabledChanged)
+            OverlayDisabledChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void SetTimedOverlay(bool on)
+    {
+        if (_timedOverlayOn == on)
+            return;
+        var wasDisabled = IsOverlayDisabled;
+        _timedOverlayOn = on;
+        if (wasDisabled != IsOverlayDisabled)
             OverlayDisabledChanged?.Invoke(this, EventArgs.Empty);
     }
 

@@ -22,8 +22,9 @@ public sealed class OverlayPainter
     private static readonly Brush DarkBrush = Frozen(new SolidColorBrush(Color.FromArgb(0xE6, 0x0A, 0x0A, 0x0F)));
     private static readonly Brush BoundaryBrush = Frozen(new SolidColorBrush(Color.FromRgb(0xFF, 0xD5, 0x00)));
     private static readonly Brush ToastFill = Frozen(new SolidColorBrush(Color.FromArgb(0xCC, 0x12, 0x12, 0x1A)));
-    private static readonly Brush[] ColorBrushes = new Brush[8];
-    private static readonly Brush[] PanelFills = new Brush[8];
+    private static readonly Brush BracketDarkBrush = Frozen(new SolidColorBrush(Color.FromArgb(BracketAlpha(0xE6), 0x0A, 0x0A, 0x0F)));
+    private static readonly Brush[] ColorBrushes = new Brush[Enum.GetValues<OverlayColor>().Length];
+    private static readonly Brush[] PanelFills = new Brush[Enum.GetValues<OverlayColor>().Length];
 
     private OverlayModel _model = OverlayModel.Empty;
     private PanelLayoutResult _panel = PanelLayoutResult.Empty;
@@ -35,8 +36,8 @@ public sealed class OverlayPainter
         foreach (var color in Enum.GetValues<OverlayColor>())
         {
             var (r, g, b) = OverlayPalette.Rgb(color);
-            ColorBrushes[(int)color] = Frozen(new SolidColorBrush(Color.FromRgb(r, g, b)));
-            PanelFills[(int)color] = Frozen(new SolidColorBrush(Color.FromArgb(0x80, r, g, b)));
+            ColorBrushes[(int)color] = Frozen(new SolidColorBrush(Color.FromArgb(BracketAlpha(0xFF), r, g, b)));
+            PanelFills[(int)color] = Frozen(new SolidColorBrush(Color.FromArgb(0x66, r, g, b)));
         }
     }
 
@@ -109,7 +110,7 @@ public sealed class OverlayPainter
         var left = BracketShape(item.Kind, m.LeftX(box), m.Top, m.Width, m.Height, mirrored: false);
         var right = BracketShape(item.Kind, m.RightX(box), m.Top, m.Width, m.Height, mirrored: true);
 
-        var darkPen = RoundPen(DarkBrush, stroke + 2 * outline);
+        var darkPen = RoundPen(BracketDarkBrush, stroke + 2 * outline);
         var colorPen = RoundPen(ColorBrushes[(int)item.Color], stroke);
 
         dc.DrawGeometry(null, darkPen, left);
@@ -117,6 +118,8 @@ public sealed class OverlayPainter
         dc.DrawGeometry(null, colorPen, left);
         dc.DrawGeometry(null, colorPen, right);
     }
+
+    private static byte BracketAlpha(int alpha) => (byte)Math.Round(alpha * BracketRasterizer.Opacity);
 
     private static readonly Dictionary<(Brush Brush, double Thickness), Pen> Pens = new();
 
@@ -199,7 +202,8 @@ public sealed class OverlayPainter
             var textX = r.X + panel.PaddingX;
             var textWidth = Math.Max(1.0, r.Width - 2 * panel.PaddingX);
             DrawOutlinedText(dc, slot.Entry.Handle, textX, r.Y + panel.PaddingY, textWidth, panel, edgePen);
-            DrawOutlinedText(dc, slot.Entry.OrgsLine, textX, r.Y + panel.PaddingY + panel.LineHeight, textWidth, panel, edgePen);
+            for (var i = 0; i < slot.OrgLines.Count; i++)
+                DrawOutlinedText(dc, slot.OrgLines[i], textX, r.Y + panel.PaddingY + (i + 1) * panel.LineHeight, textWidth, panel, edgePen);
         }
 
         if (panel.MoreText is { } more)

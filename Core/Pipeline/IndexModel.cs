@@ -1,3 +1,4 @@
+using Iris.Core.Detection;
 using Iris.Core.Overlay;
 
 namespace Iris.Core.Pipeline;
@@ -22,6 +23,35 @@ public static class IndexModel
     public static bool IsListed(MarkerRecord marker) =>
         marker.Status == PlateStatus.Confirmed && marker.Name is { } name && marker.PlateRel is not null
         && marker.Identity is { } identity && identity.Rsi != RsiState.NotFound && string.Equals(identity.Handle, name, StringComparison.OrdinalIgnoreCase);
+
+    public static HashSet<int>? WithheldDuplicates(IReadOnlyList<MarkerRecord> markers)
+    {
+        HashSet<int>? withheld = null;
+        for (var i = 0; i < markers.Count; i++)
+        {
+            var marker = markers[i];
+            if (marker.Status != PlateStatus.Confirmed || marker.Name is null)
+                continue;
+            var shared = false;
+            var greens = 0;
+            for (var j = 0; j < markers.Count; j++)
+            {
+                var other = markers[j];
+                if (other.Status != PlateStatus.Confirmed || !string.Equals(other.Name, marker.Name, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                shared |= j != i;
+                if (PlateColourOf(other) == PlateColor.Green)
+                    greens++;
+            }
+
+            if (shared && (greens != 1 || PlateColourOf(marker) != PlateColor.Green))
+                (withheld ??= new HashSet<int>()).Add(marker.Id);
+        }
+
+        return withheld;
+    }
+
+    public static PlateColor? PlateColourOf(MarkerRecord marker) => marker.NameLine?.Colour ?? marker.PlateColour;
 
     public static (double CentreX, double Top) PositionAt(MarkerRecord marker, IndexSnapshot snapshot, double nowMs, PipelineSettings pipe, LiveSettings live)
     {
@@ -48,12 +78,13 @@ public static class IndexModel
 
         var items = new List<BracketItem>();
         var listed = new List<MarkerRecord>();
+        var withheld = WithheldDuplicates(snapshot.Markers);
         foreach (var marker in snapshot.Markers)
         {
             if (!IsListed(marker) || nowMs - marker.LastFoundMs > pipe.PanelStaleMs)
                 continue;
             listed.Add(marker);
-            if (!IsDrawable(marker, nowMs, pipe))
+            if (!IsDrawable(marker, nowMs, pipe) || (withheld is not null && withheld.Contains(marker.Id)))
                 continue;
             var rel = marker.PlateRel!.Value;
             var (cx, top) = PositionAt(marker, snapshot, nowMs, pipe, live);
@@ -101,7 +132,7 @@ public static class IndexModel
         {
             var identity = marker.Identity!;
             if (seen.Add(identity.Handle))
-                entries.Add(new PanelEntry(identity.Handle, identity.Kind, identity.Color, identity.OrgsLine));
+                entries.Add(new PanelEntry(identity.Handle, identity.Kind, identity.Color, identity.Orgs));
         }
 
         return entries.OrderBy(e => (int)e.Kind).ToList();

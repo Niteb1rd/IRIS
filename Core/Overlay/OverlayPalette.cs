@@ -14,6 +14,7 @@ public static class OverlayPalette
         OverlayColor.Blue => (0x3D, 0x8B, 0xFF),
         OverlayColor.Magenta => (0xFF, 0x3D, 0xDB),
         OverlayColor.Purple => (0xA6, 0x6B, 0xFF),
+        OverlayColor.Grey => (0xB4, 0xB4, 0xB4),
         _ => (0xFF, 0xFF, 0xFF),
     };
 }

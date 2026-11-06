@@ -67,11 +67,11 @@ public sealed class TrayIcon : IDisposable
 
     public event EventHandler? TogglePanelRequested;
 
-    public void SetOverlayDisabled(bool disabled)
+    public void SetOverlayDisabled(bool savedDisabled, bool disabled)
     {
         if (_disposed)
             return;
-        _disableOverlayItem.Checked = disabled;
+        _disableOverlayItem.Checked = savedDisabled;
         AppIcons.SetOverlayDisabled(disabled);
         _icon.Icon = AppIcons.Tray;
     }

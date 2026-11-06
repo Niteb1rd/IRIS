@@ -38,6 +38,10 @@ public sealed record AppSettings
 
     public int PanelTopGapPercent { get; init; }
 
+    public OrgDisplay PanelOrgDisplay { get; init; }
+
+    public bool PanelMainOrgOnly { get; init; }
+
 
     public const int BoundaryPercentMin = 0;
     public const int BoundaryPercentMax = 30;
@@ -75,12 +79,44 @@ public sealed record AppSettings
 
     public bool HideCaptureBorder { get; init; }
 
+    public bool MiningDisabled { get; init; }
+
+
+    public static IReadOnlyList<int> SettingsWindowScales { get; } = new[] { 100, 110, 125, 150, 175 };
+
+    public int SettingsWindowScale { get; init; }
+
+    public DarkMode SettingsDarkMode { get; init; }
+
 
     public bool OverlayDisabled { get; init; }
 
     public string HotkeyToggleOverlay { get; init; } = string.Empty;
 
     public string HotkeyTogglePanel { get; init; } = string.Empty;
+
+    public const int TimedOverlaySecondsMin = 5;
+    public const int TimedOverlaySecondsMax = 30;
+
+    public string HotkeyTimedOverlay { get; init; } = string.Empty;
+
+    public int TimedOverlaySeconds { get; init; }
+}
+
+public enum DarkMode
+{
+    System,
+
+    On,
+
+    Off,
+}
+
+public enum OrgDisplay
+{
+    FullName,
+
+    Sid,
 }
 
 public enum CaptureMethod

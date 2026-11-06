@@ -64,13 +64,18 @@ public partial class ConfigWindow : Window, IImportHost
 
     private string? _copiedInvalidSettingsKey;
 
+    private double _windowScale = 1.0;
+    private bool _darkModeShownOn;
+
     public ConfigWindow(AppServices services, ImportCoordinator imports, CacheUpdater updater, OverlayController overlay)
     {
         _services = services;
         _imports = imports;
         _updater = updater;
         _overlay = overlay;
+        AppTheme.Apply(services.Settings.SettingsDarkMode, text => services.Log.Write(services.Clock.UtcNow, text));
         InitializeComponent();
+        AppTheme.Attach(this);
 
         ConfigureSlider(PanelWidthSlider, AppSettings.PanelWidthPercentMin, AppSettings.PanelWidthPercentMax);
         ConfigureSlider(PanelTextSizeSlider, AppSettings.PanelTextSizeMin, AppSettings.PanelTextSizeMax);
@@ -79,6 +84,10 @@ public partial class ConfigWindow : Window, IImportHost
         ConfigureSlider(TrackingFpsSlider, AppSettings.NameplateTrackingFpsMin, AppSettings.NameplateTrackingFpsMax);
         foreach (var slider in new[] { BoundaryTopSlider, BoundaryBottomSlider, BoundaryLeftSlider, BoundaryRightSlider })
             ConfigureSlider(slider, AppSettings.BoundaryPercentMin, AppSettings.BoundaryPercentMax);
+        foreach (var percent in AppSettings.SettingsWindowScales)
+            WindowScaleCombo.Items.Add(percent.ToString(CultureInfo.InvariantCulture) + " %");
+        for (var seconds = AppSettings.TimedOverlaySecondsMin; seconds <= AppSettings.TimedOverlaySecondsMax; seconds++)
+            TimedSecondsCombo.Items.Add(seconds.ToString(CultureInfo.InvariantCulture));
 
         PlayersList.ItemsSource = _players;
         OrgsList.ItemsSource = _orgs;
@@ -91,6 +100,7 @@ public partial class ConfigWindow : Window, IImportHost
         LoadRowsFrom(services.CurrentConfig);
         LoadSettingsControls();
         _baseline = Snapshot();
+        ApplyWindowScale();
 
         Tabs.SelectedItem = services.ListFileHasErrors && !services.SettingsFileHasErrors ? PlayersTab : SettingsTab;
 
@@ -164,6 +174,9 @@ public partial class ConfigWindow : Window, IImportHost
             _orgs.Add(new OrgRowViewModel(o.Sid, o.Priority, o.Color));
         foreach (var r in config.OrgRules.Where(rule => rule.Kind != AttributeKind.NoMatch))
             _rules.Add(new RuleRowViewModel(r.Kind, r.Value, r.Priority, r.Color));
+
+        OrgsMainOnlyCheck.IsChecked = config.OrgsMainOrgOnly;
+        RulesMainOnlyCheck.IsChecked = config.OrgRulesMainOrgOnly;
 
         var noMatch = NoMatchRule.Find(config) ?? NoMatchRule.CreateDefault();
         _rules.Add(new RuleRowViewModel(AttributeKind.NoMatch, null, NoMatchRule.Priority, noMatch.Color));

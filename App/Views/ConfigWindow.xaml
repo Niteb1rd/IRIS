@@ -9,6 +9,8 @@
         Width="890" Height="608"
         MinWidth="750" MinHeight="445"
         FontSize="14"
+        Background="{DynamicResource Iris.WindowBack}"
+        Foreground="{DynamicResource Iris.Text}"
         WindowStartupLocation="CenterScreen"
         FocusManager.FocusedElement="{Binding ElementName=FocusSink}"
         PreviewMouseDown="OnWindowPreviewMouseDown"
@@ -17,12 +19,11 @@
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
         <conv:OverlayColorToBrushConverter x:Key="ColorToBrush" />
-        <conv:StatusKindToBrushConverter x:Key="StatusToBrush" />
 
         <DataTemplate x:Key="ColorItemTemplate">
             <StackPanel Orientation="Horizontal">
                 <Border Width="14" Height="14" Margin="0,0,6,0"
-                        CornerRadius="2" BorderThickness="1" BorderBrush="#66000000"
+                        CornerRadius="2" BorderThickness="1" BorderBrush="{DynamicResource Iris.SwatchBorder}"
                         Background="{Binding Converter={StaticResource ColorToBrush}}" />
                 <TextBlock Text="{Binding}" VerticalAlignment="Center" />
             </StackPanel>
@@ -34,10 +35,29 @@
                     <ProgressBar DockPanel.Dock="Left" Width="40" Height="6" Margin="0,0,6,0"
                                  VerticalAlignment="Center" IsIndeterminate="True"
                                  Visibility="{Binding IsChecking, Converter={StaticResource BoolToVisibility}}" />
-                    <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" VerticalAlignment="Center"
-                               Foreground="{Binding StatusKind, Converter={StaticResource StatusToBrush}}" />
+                    <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" VerticalAlignment="Center">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource Iris.Hint}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding StatusKind}" Value="{x:Static vm:RowStatusKind.Valid}">
+                                        <Setter Property="Foreground" Value="{DynamicResource Iris.Valid}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding StatusKind}" Value="{x:Static vm:RowStatusKind.NotFound}">
+                                        <Setter Property="Foreground" Value="{DynamicResource Iris.Error}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding StatusKind}" Value="{x:Static vm:RowStatusKind.Invalid}">
+                                        <Setter Property="Foreground" Value="{DynamicResource Iris.Error}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding StatusKind}" Value="{x:Static vm:RowStatusKind.Failed}">
+                                        <Setter Property="Foreground" Value="{DynamicResource Iris.Note}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </DockPanel>
-                <TextBlock Text="{Binding Note}" TextWrapping="Wrap" FontSize="13" Foreground="#B26A00"
+                <TextBlock Text="{Binding Note}" TextWrapping="Wrap" FontSize="13" Foreground="{DynamicResource Iris.Note}"
                            Visibility="{Binding HasNote, Converter={StaticResource BoolToVisibility}}" />
             </StackPanel>
         </DataTemplate>
@@ -45,19 +65,8 @@
         <DataTemplate x:Key="RuleValuePickTemplate">
                 <ComboBox IsEditable="False"
                           ItemsSource="{Binding Suggestions}"
-                          SelectedItem="{Binding Value}">
-                    <ComboBox.Style>
-                        <Style TargetType="ComboBox">
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding HasInvalidValue}" Value="True">
-                                    <Setter Property="Foreground" Value="#C62828" />
-                                    <Setter Property="BorderBrush" Value="#C62828" />
-                                    <Setter Property="ToolTip" Value="This value is not in the list of known values. Pick another one." />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </ComboBox.Style>
-                </ComboBox>
+                          SelectedItem="{Binding Value}"
+                          Style="{DynamicResource Iris.RuleValueCombo}" />
         </DataTemplate>
         <DataTemplate x:Key="RuleValueInfoTemplate">
             <TextBox IsEnabled="False" IsReadOnly="True"
@@ -85,7 +94,7 @@
         </DataTemplate>
     </Window.Resources>
 
-    <Grid>
+    <Grid x:Name="RootGrid">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -94,17 +103,17 @@
 
         <StackPanel Grid.Row="0">
             <Border x:Name="ListBanner" Visibility="Collapsed" Margin="8,8,8,0" Padding="8,6"
-                    Background="#FDECEA" BorderBrush="#C62828" BorderThickness="1" CornerRadius="3">
+                    Background="{DynamicResource Iris.BannerBack}" BorderBrush="{DynamicResource Iris.BannerBorder}" BorderThickness="1" CornerRadius="3">
                 <DockPanel LastChildFill="True">
                     <Button DockPanel.Dock="Right" Content="Open file" Padding="10,3" Margin="8,0,0,0" VerticalAlignment="Top" Click="OnOpenListFile" />
-                    <TextBlock x:Name="ListBannerText" TextWrapping="Wrap" Foreground="#B71C1C" />
+                    <TextBlock x:Name="ListBannerText" TextWrapping="Wrap" Foreground="{DynamicResource Iris.BannerText}" />
                 </DockPanel>
             </Border>
             <Border x:Name="SettingsBanner" Visibility="Collapsed" Margin="8,8,8,0" Padding="8,6"
-                    Background="#FDECEA" BorderBrush="#C62828" BorderThickness="1" CornerRadius="3">
+                    Background="{DynamicResource Iris.BannerBack}" BorderBrush="{DynamicResource Iris.BannerBorder}" BorderThickness="1" CornerRadius="3">
                 <DockPanel LastChildFill="True">
                     <Button DockPanel.Dock="Right" Content="Open file" Padding="10,3" Margin="8,0,0,0" VerticalAlignment="Top" Click="OnOpenSettingsFile" />
-                    <TextBlock x:Name="SettingsBannerText" TextWrapping="Wrap" Foreground="#B71C1C" />
+                    <TextBlock x:Name="SettingsBannerText" TextWrapping="Wrap" Foreground="{DynamicResource Iris.BannerText}" />
                 </DockPanel>
             </Border>
         </StackPanel>
@@ -120,7 +129,7 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Margin="0,0,0,8" TextWrapping="Wrap" Foreground="#616161"
+                    <TextBlock Grid.Row="0" Margin="0,0,0,8" TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}"
                                Text="Player names will first be matched against this list. Pick a color for the outline." />
 
                     <Grid Grid.Row="1" Margin="0,0,0,4">
@@ -179,7 +188,7 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Margin="0,0,0,8" TextWrapping="Wrap" Foreground="#616161"
+                    <TextBlock Grid.Row="0" Margin="0,0,0,8" TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}"
                                Text="If player is in org, use selected color. Priority number used for tiebreaks 1=highest. Last tiebreak is entry order." />
 
                     <Grid Grid.Row="1" Margin="0,0,0,4">
@@ -230,8 +239,12 @@
                         </ItemsControl>
                     </ScrollViewer>
 
-                    <Button Grid.Row="3" Content="+ Add org" HorizontalAlignment="Left"
-                            Padding="12,4" Margin="0,8,0,0" Click="OnAddOrg" />
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Content="+ Add org" Padding="12,4" Click="OnAddOrg" />
+                        <CheckBox x:Name="OrgsMainOnlyCheck" Content="Only check main org" Margin="16,0,0,0" VerticalAlignment="Center"
+                                  ToolTip="Match only the player's main org. Affiliates are still shown in the info panel."
+                                  Checked="OnSettingChanged" Unchecked="OnSettingChanged" />
+                    </StackPanel>
                 </Grid>
             </TabItem>
 
@@ -244,7 +257,7 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Margin="0,0,0,8" TextWrapping="Wrap" Foreground="#616161"
+                    <TextBlock Grid.Row="0" Margin="0,0,0,8" TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}"
                                Text="If name is not in previous two lists, use these general rules. The last row, No Match, colors every other detected player." />
 
                     <Grid Grid.Row="1" Margin="0,0,0,4">
@@ -322,39 +335,52 @@
                                                   ItemTemplate="{StaticResource ColorItemTemplate}" />
                                         <Button Grid.Column="4" Content="&#10005;" ToolTip="Remove this row"
                                                 Width="30" Height="28" VerticalAlignment="Top"
-                                                Click="OnRemoveRow">
-                                            <Button.Style>
-                                                <Style TargetType="Button">
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsNoMatch}" Value="True">
-                                                            <Setter Property="Visibility" Value="Hidden" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </Button.Style>
-                                        </Button>
+                                                Style="{DynamicResource Iris.RuleRemoveButton}"
+                                                Click="OnRemoveRow" />
                                     </Grid>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </ScrollViewer>
 
-                    <Button Grid.Row="3" Content="+ Add rule" HorizontalAlignment="Left"
-                            Padding="12,4" Margin="0,8,0,0" Click="OnAddRule" />
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Content="+ Add rule" Padding="12,4" Click="OnAddRule" />
+                        <CheckBox x:Name="RulesMainOnlyCheck" Content="Only check main org" Margin="16,0,0,0" VerticalAlignment="Center"
+                                  ToolTip="The rules look only at the player's main org. Affiliates are still shown in the info panel."
+                                  Checked="OnSettingChanged" Unchecked="OnSettingChanged" />
+                    </StackPanel>
                 </Grid>
             </TabItem>
 
             <TabItem x:Name="SettingsTab" Header="Settings">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="8">
-                        <TextBlock Margin="0,0,0,12" TextWrapping="Wrap" Foreground="#616161"
+                        <TextBlock Margin="0,0,0,12" TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}"
                                    Text="App settings for this PC. These are not included in the exported config." />
 
-                        <CheckBox x:Name="CheckForUpdatesCheck" Content="Check for updates on app start (api.github.com)" Margin="0,0,0,16"
+                        <CheckBox x:Name="CheckForUpdatesCheck" Content="Check for updates on app start (api.github.com)" Margin="0,0,0,8"
                                   Checked="OnSettingChanged" Unchecked="OnSettingChanged" />
 
+                        <Grid Margin="0,0,0,16" HorizontalAlignment="Left">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Window size" VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <ComboBox x:Name="WindowScaleCombo" Grid.Row="0" Grid.Column="1" Width="117" SelectionChanged="OnSettingChanged" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Dark Mode" VerticalAlignment="Center" Margin="0,6,8,0" />
+                            <ComboBox x:Name="DarkModeCombo" Grid.Row="1" Grid.Column="1" Width="117" Margin="0,6,0,0" SelectionChanged="OnSettingChanged">
+                                <ComboBoxItem Content="On" />
+                                <ComboBoxItem Content="Off" />
+                            </ComboBox>
+                        </Grid>
+
                         <TextBlock Text="Hotkeys" FontWeight="SemiBold" Margin="0,0,0,4" />
-                        <TextBlock TextWrapping="Wrap" Foreground="#616161" Margin="0,0,0,6"
+                        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}" Margin="0,0,0,6"
                                    Text="Key combinations with Ctrl, Alt, Shift allowed." />
                         <Grid Margin="0,0,0,16">
                             <Grid.ColumnDefinitions>
@@ -367,6 +393,8 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Toggle Overlay" VerticalAlignment="Center" />
@@ -374,7 +402,7 @@
                                              HotkeyChanged="OnHotkeyBoxChanged" />
                             <Button x:Name="ClearOverlayHotkeyButton" Grid.Row="0" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
                                     Click="OnClearOverlayHotkey" />
-                            <TextBlock x:Name="OverlayHotkeyError" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Foreground="#C62828"
+                            <TextBlock x:Name="OverlayHotkeyError" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Foreground="{DynamicResource Iris.Error}"
                                        TextWrapping="Wrap" Visibility="Collapsed" />
 
                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Toggle Info Panel" VerticalAlignment="Center" />
@@ -382,7 +410,26 @@
                                              HotkeyChanged="OnHotkeyBoxChanged" />
                             <Button x:Name="ClearPanelHotkeyButton" Grid.Row="2" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
                                     Click="OnClearPanelHotkey" />
-                            <TextBlock x:Name="PanelHotkeyError" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Foreground="#C62828"
+                            <TextBlock x:Name="PanelHotkeyError" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Foreground="{DynamicResource Iris.Error}"
+                                       TextWrapping="Wrap" Visibility="Collapsed" />
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Activate Overlay for" VerticalAlignment="Center" />
+                            <Grid Grid.Row="4" Grid.Column="1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <ComboBox x:Name="TimedSecondsCombo" Grid.Column="0" Width="55" Margin="0,2" VerticalAlignment="Center"
+                                          SelectionChanged="OnSettingChanged"
+                                          ToolTip="While the overlay is off, the hotkey turns it on for this many seconds (not saved)." />
+                                <TextBlock Grid.Column="1" Text="Seconds" VerticalAlignment="Center" Margin="6,0,8,0" />
+                                <local:HotkeyBox x:Name="TimedHotkeyBox" Grid.Column="2" Margin="0,2" Padding="4,2"
+                                                 HotkeyChanged="OnHotkeyBoxChanged" />
+                            </Grid>
+                            <Button x:Name="ClearTimedHotkeyButton" Grid.Row="4" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
+                                    Click="OnClearTimedHotkey" />
+                            <TextBlock x:Name="TimedHotkeyError" Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" Foreground="{DynamicResource Iris.Error}"
                                        TextWrapping="Wrap" Visibility="Collapsed" />
                         </Grid>
 
@@ -399,7 +446,7 @@
                         </StackPanel>
                         <TextBlock Text="Hosted Config URL" Margin="0,0,0,2" />
                         <TextBox x:Name="HostedUrlBox" MaxLength="2000" LostKeyboardFocus="OnHostedUrlLostFocus" TextChanged="OnHostedUrlTextChanged" />
-                        <TextBlock x:Name="HostedUrlError" Foreground="#C62828" TextWrapping="Wrap" Margin="0,2,0,0"
+                        <TextBlock x:Name="HostedUrlError" Foreground="{DynamicResource Iris.Error}" TextWrapping="Wrap" Margin="0,2,0,0"
                                    Visibility="Collapsed" />
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,8,0,0">
                             <Button x:Name="ImportUrlButton" Content="Import from URL" Padding="12,4" Margin="0,0,12,0" VerticalAlignment="Center" Click="OnImportFromUrl"
@@ -410,11 +457,8 @@
                                       ToolTip="Checks the address once a day while IRIS runs and asks before importing a changed file." />
                         </StackPanel>
 
-                        <Button x:Name="TestOverlayButton" Content="Show Test Overlay" HorizontalAlignment="Left"
-                                Padding="12,4" Margin="0,16,0,0" Click="OnTestOverlay" />
-
                         <TextBlock Text="Capture" FontWeight="SemiBold" Margin="0,16,0,4" />
-                        <TextBlock Margin="0,0,0,6" TextWrapping="Wrap" Foreground="#616161"
+                        <TextBlock Margin="0,0,0,6" TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}"
                                    Text="DD captures with better fps and tracking. WGC allows showing the overlay in streams and recordings, but caps around 50 fps." />
                         <Grid Margin="0,0,0,6">
                             <Grid.ColumnDefinitions>
@@ -433,8 +477,10 @@
                                   Checked="OnSettingChanged" Unchecked="OnSettingChanged" ToolTipService.ShowOnDisabled="True" />
 
                         <TextBlock Text="Tracking Boundary" FontWeight="SemiBold" Margin="0,16,0,4" />
-                        <TextBlock TextWrapping="Wrap" Foreground="#616161" Margin="0,0,0,6"
+                        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}" Margin="0,0,0,6"
                                    Text="Looks for player in defined area. Note: Active videos other than Star Citizen can cause detection issues." />
+                        <Button x:Name="BoundaryTestButton" Content="Show Boundary" HorizontalAlignment="Left"
+                                Padding="12,4" Margin="0,0,0,6" Click="OnShowBoundary" />
                         <Grid Margin="0,0,0,6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="250" />
@@ -442,6 +488,7 @@
                                 <ColumnDefinition Width="82" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
@@ -475,9 +522,17 @@
                                     ValueChanged="OnOverlaySliderChanged" />
                             <TextBlock Grid.Row="3" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center"
                                        Text="{Binding Value, ElementName=BoundaryRightSlider, StringFormat='{}{0:0}%'}" />
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Tracking Tickrate" VerticalAlignment="Center" />
+                            <Slider x:Name="TrackingFpsSlider" Grid.Row="4" Grid.Column="1" Margin="0,3" VerticalAlignment="Center"
+                                    TickFrequency="5" IsSnapToTickEnabled="True" SmallChange="5" LargeChange="15"
+                                    ValueChanged="OnTrackingFpsSliderChanged" />
+                            <TextBlock x:Name="TrackingFpsLabel" Grid.Row="4" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center" />
                         </Grid>
 
-                        <TextBlock Text="Overlay" FontWeight="SemiBold" Margin="0,16,0,4" />
+                        <TextBlock Text="Info Panel" FontWeight="SemiBold" Margin="0,16,0,4" />
+                        <Button x:Name="PanelTestButton" Content="Show Info Panel" HorizontalAlignment="Left"
+                                Padding="12,4" Margin="0,0,0,6" Click="OnShowInfoPanel" />
                         <Grid Margin="0,0,0,6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="250" />
@@ -520,12 +575,16 @@
                             <TextBlock Grid.Row="3" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center"
                                        Text="{Binding Value, ElementName=PanelTopGapSlider, StringFormat='{}{0:0}%'}" />
 
-                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Nameplate Tracking Tickrate" VerticalAlignment="Center" />
-                            <Slider x:Name="TrackingFpsSlider" Grid.Row="4" Grid.Column="1" Margin="0,3" VerticalAlignment="Center"
-                                    TickFrequency="5" IsSnapToTickEnabled="True" SmallChange="5" LargeChange="15"
-                                    ValueChanged="OnTrackingFpsSliderChanged" />
-                            <TextBlock x:Name="TrackingFpsLabel" Grid.Row="4" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Display Player Org" VerticalAlignment="Center" />
+                            <ComboBox x:Name="OrgDisplayCombo" Grid.Row="4" Grid.Column="1" Margin="0,3" SelectionChanged="OnPanelOrgOptionChanged"
+                                      ToolTip="Full Name shows the org's name as RSI shows it (its SID until IRIS has read the name).">
+                                <ComboBoxItem Content="Full Name" />
+                                <ComboBoxItem Content="SID" />
+                            </ComboBox>
                         </Grid>
+                        <CheckBox x:Name="MainOrgOnlyCheck" Content="Display only main org (unless another org determines color)" Margin="0,0,0,8"
+                                  Checked="OnPanelOrgOptionChanged" Unchecked="OnPanelOrgOptionChanged"
+                                  ToolTip="Only changes what the info panel shows. The Orgs and Org-Attribute tabs' &quot;Only check main org&quot; decides the colors." />
 
                         <TextBlock Text="Cache" FontWeight="SemiBold" Margin="0,16,0,4" />
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
@@ -541,6 +600,8 @@
                         <TextBlock Text="Mining" FontWeight="SemiBold" Margin="0,16,0,4" />
                         <Button x:Name="EditMiningButton" Content="Edit Mining Signals Data" HorizontalAlignment="Left"
                                 Padding="12,4" Margin="0,0,0,8" Click="OnEditMiningData" />
+                        <CheckBox x:Name="MiningDisabledCheck" Content="Disable Mining Feature" Margin="0,0,0,8"
+                                  Checked="OnSettingChanged" Unchecked="OnSettingChanged" />
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

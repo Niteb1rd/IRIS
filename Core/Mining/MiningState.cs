@@ -68,7 +68,7 @@ public sealed class MiningLabelState
                 {
                     _pending = null;
                     _lastValueMs = frameMs;
-                    changed = Show(value, label);
+                    changed = Show(value, label ?? table.AboveLimitLabel(value));
                 }
 
                 break;

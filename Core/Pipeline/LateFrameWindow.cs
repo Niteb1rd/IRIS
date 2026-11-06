@@ -2,7 +2,7 @@ namespace Iris.Core.Pipeline;
 
 public sealed class LateFrameWindow
 {
-    public const string NoteText = "Detection may lag: the game picture is arriving late (another video playing can cause this).";
+    public const string NoteText = "IRIS: Video capture is delayed, tracking may lag.";
 
     private readonly Queue<double> _lateAt = new();
 

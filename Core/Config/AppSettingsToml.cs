@@ -33,7 +33,8 @@ public static class AppSettingsToml
         "panel_enabled", "panel_width_percent", "panel_text_size", "panel_right_gap_percent", "panel_top_gap_percent",
         "boundary_top", "boundary_bottom", "boundary_left", "boundary_right",
         "nameplate_tracking_fps", "capture_method", "overlay_visible_in_capture", "hide_capture_border", "check_for_updates",
-        "overlay_disabled", "hotkey_toggle_overlay", "hotkey_toggle_panel",
+        "settings_window_scale", "settings_dark_mode", "overlay_disabled", "hotkey_toggle_overlay", "hotkey_toggle_panel",
+        "hotkey_timed_overlay", "timed_overlay_seconds", "mining_disabled", "panel_org_display", "panel_main_org_only",
     };
 
     private const string TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'";
@@ -56,6 +57,8 @@ public static class AppSettingsToml
         sb.AppendLine($"panel_text_size = {Math.Clamp(settings.PanelTextSize, AppSettings.PanelTextSizeMin, AppSettings.PanelTextSizeMax)}");
         sb.AppendLine($"panel_right_gap_percent = {Math.Clamp(settings.PanelRightGapPercent, AppSettings.PanelRightGapPercentMin, AppSettings.PanelRightGapPercentMax)}");
         sb.AppendLine($"panel_top_gap_percent = {Math.Clamp(settings.PanelTopGapPercent, AppSettings.PanelTopGapPercentMin, AppSettings.PanelTopGapPercentMax)}");
+        sb.AppendLine($"panel_org_display = {SocialConfigToml.Quote(OrgDisplayText(settings.PanelOrgDisplay))}");
+        sb.AppendLine($"panel_main_org_only = {Bool(settings.PanelMainOrgOnly)}");
         sb.AppendLine($"boundary_top = {ClampBoundary(settings.BoundaryTop)}");
         sb.AppendLine($"boundary_bottom = {ClampBoundary(settings.BoundaryBottom)}");
         sb.AppendLine($"boundary_left = {ClampBoundary(settings.BoundaryLeft)}");
@@ -65,15 +68,29 @@ public static class AppSettingsToml
         sb.AppendLine($"overlay_visible_in_capture = {Bool(settings.OverlayVisibleInCapture)}");
         sb.AppendLine($"hide_capture_border = {Bool(settings.HideCaptureBorder)}");
         sb.AppendLine($"check_for_updates = {Bool(settings.CheckForUpdates)}");
+        sb.AppendLine($"settings_window_scale = {WriteWindowScale(settings.SettingsWindowScale)}");
+        sb.AppendLine($"settings_dark_mode = {SocialConfigToml.Quote(DarkModeText(settings.SettingsDarkMode))}");
         sb.AppendLine($"overlay_disabled = {Bool(settings.OverlayDisabled)}");
         sb.AppendLine($"hotkey_toggle_overlay = {SocialConfigToml.Quote(HotkeyText.Normalize(settings.HotkeyToggleOverlay))}");
         sb.AppendLine($"hotkey_toggle_panel = {SocialConfigToml.Quote(HotkeyText.Normalize(settings.HotkeyTogglePanel))}");
+        sb.AppendLine($"hotkey_timed_overlay = {SocialConfigToml.Quote(HotkeyText.Normalize(settings.HotkeyTimedOverlay))}");
+        sb.AppendLine($"timed_overlay_seconds = {Math.Clamp(settings.TimedOverlaySeconds, AppSettings.TimedOverlaySecondsMin, AppSettings.TimedOverlaySecondsMax)}");
+        sb.AppendLine($"mining_disabled = {Bool(settings.MiningDisabled)}");
         return sb.ToString();
     }
 
     private static string Bool(bool value) => value ? "true" : "false";
 
     public static string CaptureMethodText(CaptureMethod method) => method == CaptureMethod.WindowCapture ? "wgc" : "desktop_duplication";
+
+    public static string OrgDisplayText(OrgDisplay display) => display == OrgDisplay.Sid ? "sid" : "name";
+
+    public static string DarkModeText(DarkMode mode) => mode switch
+    {
+        DarkMode.On => "on",
+        DarkMode.Off => "off",
+        _ => "system",
+    };
 
     private static int ClampBoundary(int value) => Math.Clamp(value, AppSettings.BoundaryPercentMin, AppSettings.BoundaryPercentMax);
 
@@ -85,6 +102,9 @@ public static class AppSettingsToml
         var rounded = (int)Math.Round((double)fps / step, MidpointRounding.AwayFromZero) * step;
         return Math.Clamp(rounded, AppSettings.NameplateTrackingFpsMin, AppSettings.NameplateTrackingFpsHighest).ToString(CultureInfo.InvariantCulture);
     }
+
+    private static string WriteWindowScale(int percent) =>
+        AppSettings.SettingsWindowScales.MinBy(v => Math.Abs(v - percent)).ToString(CultureInfo.InvariantCulture);
 
     public static AppSettingsLoadResult Read(string text) => ReadWith(text, AppSettings.Defaults);
 
@@ -242,20 +262,32 @@ public static class AppSettingsToml
         var visibleInCapture = ReadBool(root, "overlay_visible_in_capture", defaults.OverlayVisibleInCapture, warnings);
         var hideBorder = ReadBool(root, "hide_capture_border", defaults.HideCaptureBorder, warnings);
         var checkForUpdates = ReadBool(root, "check_for_updates", defaults.CheckForUpdates, warnings);
+        var windowScale = ReadWindowScale(root, defaults.SettingsWindowScale, warnings);
+        var darkMode = ReadDarkMode(root, defaults.SettingsDarkMode, warnings);
         var overlayDisabled = ReadBool(root, "overlay_disabled", defaults.OverlayDisabled, warnings);
         var hotkeyOverlay = ReadHotkey(root, "hotkey_toggle_overlay", defaults.HotkeyToggleOverlay, warnings);
         var hotkeyPanel = ReadHotkey(root, "hotkey_toggle_panel", defaults.HotkeyTogglePanel, warnings);
+        var hotkeyTimed = ReadHotkey(root, "hotkey_timed_overlay", defaults.HotkeyTimedOverlay, warnings);
+        var timedSeconds = ReadTimedSeconds(root, defaults.TimedOverlaySeconds, warnings);
+        var miningDisabled = ReadBool(root, "mining_disabled", defaults.MiningDisabled, warnings);
+        var orgDisplay = ReadOrgDisplay(root, defaults.PanelOrgDisplay, warnings);
+        var mainOrgOnly = ReadBool(root, "panel_main_org_only", defaults.PanelMainOrgOnly, warnings);
 
         var settings = new AppSettings
         {
             OverlayDisabled = overlayDisabled,
             HotkeyToggleOverlay = hotkeyOverlay,
             HotkeyTogglePanel = hotkeyPanel,
+            HotkeyTimedOverlay = hotkeyTimed,
+            TimedOverlaySeconds = timedSeconds,
+            MiningDisabled = miningDisabled,
             PanelEnabled = panelEnabled,
             PanelWidthPercent = panelWidth,
             PanelTextSize = panelText,
             PanelRightGapPercent = panelRightGap,
             PanelTopGapPercent = panelTopGap,
+            PanelOrgDisplay = orgDisplay,
+            PanelMainOrgOnly = mainOrgOnly,
             BoundaryTop = boundaryTop,
             BoundaryBottom = boundaryBottom,
             BoundaryLeft = boundaryLeft,
@@ -265,6 +297,8 @@ public static class AppSettingsToml
             OverlayVisibleInCapture = visibleInCapture,
             HideCaptureBorder = hideBorder,
             CheckForUpdates = checkForUpdates,
+            SettingsWindowScale = windowScale,
+            SettingsDarkMode = darkMode,
             CacheTtlDays = ttl,
             SessionLogEnabled = logEnabled,
             HostedConfigUrl = url,
@@ -357,6 +391,64 @@ public static class AppSettingsToml
                 warnings.Add($"{Key}: must be a whole number from {min} to {highest} in steps of {step}, or \"max\"; using {fallbackText}.");
                 return fallback;
         }
+    }
+
+    private static int ReadWindowScale(TomlTable root, int fallback, List<string> warnings)
+    {
+        const string Key = "settings_window_scale";
+        if (!root.TryGetValue(Key, out var raw))
+            return fallback;
+        if (raw is long value && AppSettings.SettingsWindowScales.Any(v => v == value))
+            return (int)value;
+        warnings.Add($"{Key}: must be one of {string.Join(", ", AppSettings.SettingsWindowScales)}; using {fallback.ToString(CultureInfo.InvariantCulture)}.");
+        return fallback;
+    }
+
+    private static OrgDisplay ReadOrgDisplay(TomlTable root, OrgDisplay fallback, List<string> warnings)
+    {
+        const string Key = "panel_org_display";
+        if (!root.TryGetValue(Key, out var raw))
+            return fallback;
+        if (raw is string text)
+        {
+            foreach (var display in new[] { OrgDisplay.FullName, OrgDisplay.Sid })
+            {
+                if (text.Trim().Equals(OrgDisplayText(display), StringComparison.OrdinalIgnoreCase))
+                    return display;
+            }
+        }
+
+        warnings.Add($"{Key}: must be \"name\" or \"sid\"; using \"{OrgDisplayText(fallback)}\".");
+        return fallback;
+    }
+
+    private static DarkMode ReadDarkMode(TomlTable root, DarkMode fallback, List<string> warnings)
+    {
+        const string Key = "settings_dark_mode";
+        if (!root.TryGetValue(Key, out var raw))
+            return fallback;
+        if (raw is string text)
+        {
+            foreach (var mode in new[] { DarkMode.System, DarkMode.On, DarkMode.Off })
+            {
+                if (text.Trim().Equals(DarkModeText(mode), StringComparison.OrdinalIgnoreCase))
+                    return mode;
+            }
+        }
+
+        warnings.Add($"{Key}: must be \"system\", \"on\" or \"off\"; using \"{DarkModeText(fallback)}\".");
+        return fallback;
+    }
+
+    private static int ReadTimedSeconds(TomlTable root, int fallback, List<string> warnings)
+    {
+        const string Key = "timed_overlay_seconds";
+        if (!root.TryGetValue(Key, out var raw))
+            return fallback;
+        if (raw is long value && value >= AppSettings.TimedOverlaySecondsMin && value <= AppSettings.TimedOverlaySecondsMax)
+            return (int)value;
+        warnings.Add($"{Key}: must be a whole number from {AppSettings.TimedOverlaySecondsMin} to {AppSettings.TimedOverlaySecondsMax}; using {fallback.ToString(CultureInfo.InvariantCulture)}.");
+        return fallback;
     }
 
     private static CaptureMethod ReadCaptureMethod(TomlTable root, CaptureMethod fallback, List<string> warnings)

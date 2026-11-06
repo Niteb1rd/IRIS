@@ -333,7 +333,12 @@ public partial class ConfigWindow
 
     private SocialConfig BuildConfig()
     {
-        var config = new SocialConfig { Name = _listName };
+        var config = new SocialConfig
+        {
+            Name = _listName,
+            OrgsMainOrgOnly = OrgsMainOnlyCheck.IsChecked == true,
+            OrgRulesMainOrgOnly = RulesMainOnlyCheck.IsChecked == true,
+        };
         foreach (var p in _players)
             config.Players.Add(new PlayerEntry(p.Value.Trim(), p.Color));
         foreach (var o in _orgs)
@@ -352,6 +357,7 @@ public partial class ConfigWindow
         lines.AddRange(_players.Select(p => $"P|{p.Value.Trim()}|{p.Color}"));
         lines.AddRange(_orgs.Select(o => $"O|{o.Value.Trim()}|{o.Priority}|{o.Color}"));
         lines.AddRange(_rules.Select(r => $"R|{r.Kind}|{(r.NeedsValue ? r.Value.Trim() : string.Empty)}|{r.Priority}|{r.Color}"));
+        lines.Add($"F|{OrgsMainOnlyCheck.IsChecked == true}|{RulesMainOnlyCheck.IsChecked == true}");
         return string.Join("\n", lines);
     }
 

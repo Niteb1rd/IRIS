@@ -109,7 +109,7 @@ public static class UpdateTiming
     }
 }
 
-public sealed record NewMarkerUpdate(PipelineGroup Group, double FrameMs, int Epoch, PixelRect Line, RequestSpec? FirstRequest) : IndexUpdate(Group, FrameMs, Epoch);
+public sealed record NewMarkerUpdate(PipelineGroup Group, double FrameMs, int Epoch, PixelRect Line, RequestSpec? FirstRequest, bool SpeedGroup = false) : IndexUpdate(Group, FrameMs, Epoch);
 
 public sealed record TrackingHitUpdate(
     PipelineGroup Group, double FrameMs, int Epoch, int Id, double CentreX, double Top, double Width, double DistanceWidth = double.NaN, double PredictionErrorPx = double.NaN,

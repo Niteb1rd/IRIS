@@ -6,7 +6,7 @@ namespace Iris.Core.Pipeline;
 
 public readonly record struct TrackSample(double Ms, double X, double Y);
 
-public sealed record MarkerIdentity(string Handle, MatchKind Kind, OverlayColor Color, string OrgsLine, RsiState Rsi = RsiState.Pending);
+public sealed record MarkerIdentity(string Handle, MatchKind Kind, OverlayColor Color, PanelOrgs Orgs, RsiState Rsi = RsiState.Pending);
 
 public sealed record MarkerRecord(int Id, double BornMs)
 {
@@ -23,6 +23,8 @@ public sealed record MarkerRecord(int Id, double BornMs)
     public double Height { get; init; }
 
     public double DistanceWidth { get; init; }
+
+    public bool BornWithSpeedGroup { get; init; }
 
     public double LineMs { get; init; } = double.NegativeInfinity;
 

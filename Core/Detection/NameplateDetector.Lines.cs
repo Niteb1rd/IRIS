@@ -40,13 +40,23 @@ public sealed partial class NameplateDetector
         Cv2.ExtractChannel(region, _red, 2);
         var kernel = Kernel(tophat, tophat);
 
-        Cv2.Threshold(_blue, _cyanWhite, _settings.CyanBlueMin, 255, ThresholdTypes.Binary);
-        Cv2.Threshold(_green, _scratch, _settings.CyanGreenMin, 255, ThresholdTypes.Binary);
-        Cv2.BitwiseAnd(_cyanWhite, _scratch, _cyanWhite);
-        Cv2.Subtract(_red, _blue, _scratch);
-        Cv2.Threshold(_scratch, _scratch, 0, 255, ThresholdTypes.BinaryInv);
-        Cv2.BitwiseAnd(_cyanWhite, _scratch, _cyanWhite);
-        ApplyTopHat(_blue, _cyanWhite, kernel, tophat, _settings.TopHatMin);
+        if (_settings.WhiteAnyTint)
+        {
+            Cv2.Max(_blue, _green, _value);
+            Cv2.Max(_value, _red, _value);
+            Cv2.Threshold(_value, _cyanWhite, _settings.WhiteValueMin, 255, ThresholdTypes.Binary);
+            ApplyTopHat(_value, _cyanWhite, kernel, tophat, _settings.TopHatMin);
+        }
+        else
+        {
+            Cv2.Threshold(_blue, _cyanWhite, _settings.CyanBlueMin, 255, ThresholdTypes.Binary);
+            Cv2.Threshold(_green, _scratch, _settings.CyanGreenMin, 255, ThresholdTypes.Binary);
+            Cv2.BitwiseAnd(_cyanWhite, _scratch, _cyanWhite);
+            Cv2.Subtract(_red, _blue, _scratch);
+            Cv2.Threshold(_scratch, _scratch, 0, 255, ThresholdTypes.BinaryInv);
+            Cv2.BitwiseAnd(_cyanWhite, _scratch, _cyanWhite);
+            ApplyTopHat(_blue, _cyanWhite, kernel, tophat, _settings.TopHatMin);
+        }
 
         Cv2.Threshold(_red, _redMask, _settings.RedMin, 255, ThresholdTypes.Binary);
         Cv2.Subtract(_red, _green, _scratch);

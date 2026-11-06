@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Threading;
@@ -12,6 +13,7 @@ public enum HotkeyAction
 {
     ToggleOverlay,
     TogglePanel,
+    TimedOverlay,
 }
 
 public sealed class HotkeyManager : IDisposable
@@ -33,9 +35,27 @@ public sealed class HotkeyManager : IDisposable
         Failed,
     }
 
-    private sealed record HookConfig(Hotkey? Overlay, Hotkey? Panel)
+    private static readonly HotkeyAction[] Actions = { HotkeyAction.ToggleOverlay, HotkeyAction.TogglePanel, HotkeyAction.TimedOverlay };
+
+    public static string NameOf(HotkeyAction action) => action switch
     {
-        public static readonly HookConfig None = new(null, null);
+        HotkeyAction.ToggleOverlay => "Toggle Overlay",
+        HotkeyAction.TogglePanel => "Toggle Info Panel",
+        HotkeyAction.TimedOverlay => "Activate Overlay for X Seconds",
+        _ => action.ToString(),
+    };
+
+    public static string TextOf(AppSettings settings, HotkeyAction action) => HotkeyText.Normalize(action switch
+    {
+        HotkeyAction.ToggleOverlay => settings.HotkeyToggleOverlay,
+        HotkeyAction.TogglePanel => settings.HotkeyTogglePanel,
+        HotkeyAction.TimedOverlay => settings.HotkeyTimedOverlay,
+        _ => string.Empty,
+    });
+
+    private sealed record HookConfig(Hotkey?[] Keys)
+    {
+        public static readonly HookConfig None = new(new Hotkey?[Actions.Length]);
     }
 
     private sealed class HookSession
@@ -53,16 +73,15 @@ public sealed class HotkeyManager : IDisposable
     private readonly NativeMethods.LowLevelKeyboardProc _callback;
 
     private HookSession? _session;
-    private string _overlayText = string.Empty;
-    private string _panelText = string.Empty;
+    private readonly string[] _texts = { string.Empty, string.Empty, string.Empty };
+    private readonly string?[] _errors = new string?[Actions.Length];
     private bool _applied;
     private volatile bool _disposed;
 
     private volatile HookConfig _config = HookConfig.None;
 
     private HookConfig? _seenConfig;
-    private bool _overlayHeld;
-    private bool _panelHeld;
+    private readonly bool[] _held = new bool[Actions.Length];
 
     public HotkeyManager(ILog log, IClock clock)
     {
@@ -76,57 +95,56 @@ public sealed class HotkeyManager : IDisposable
 
     public event EventHandler? StatusChanged;
 
-    public string? OverlayError { get; private set; }
-
-    public string? PanelError { get; private set; }
+    public string? ErrorOf(HotkeyAction action) => _errors[(int)action];
 
     public void Apply(AppSettings settings)
     {
         if (_disposed)
             return;
 
-        var overlayText = HotkeyText.Normalize(settings.HotkeyToggleOverlay);
-        var panelText = HotkeyText.Normalize(settings.HotkeyTogglePanel);
-        if (_applied && overlayText == _overlayText && panelText == _panelText)
+        var texts = Array.ConvertAll(Actions, a => TextOf(settings, a));
+        if (_applied && texts.SequenceEqual(_texts))
         {
             if (_session is { State: HookState.Failed })
                 EnsureHooked();
             return;
         }
 
-        var oldOverlayError = OverlayError;
-        var oldPanelError = PanelError;
+        var oldErrors = (string?[])_errors.Clone();
         _applied = true;
-        _overlayText = overlayText;
-        _panelText = panelText;
-        OverlayError = null;
-        PanelError = null;
+        texts.CopyTo(_texts, 0);
 
-        Hotkey? overlayKey = null;
-        Hotkey? panelKey = null;
-        if (overlayText.Length > 0 && overlayText == panelText)
+        var keys = new Hotkey?[Actions.Length];
+        var parts = new string[Actions.Length];
+        foreach (var action in Actions)
         {
-            OverlayError = PanelError = $"Both hotkeys are {overlayText}. Choose two different ones; neither is active now.";
-            _log.Write(_clock.UtcNow, "Hotkeys: both are " + overlayText + "; neither is active");
-        }
-        else
-        {
-            if (HotkeyText.TryParse(overlayText, out var parsedOverlay, out _))
-                overlayKey = parsedOverlay;
-            if (HotkeyText.TryParse(panelText, out var parsedPanel, out _))
-                panelKey = parsedPanel;
-            _log.Write(_clock.UtcNow,
-                $"Hotkeys: Toggle Overlay = {(overlayText.Length == 0 ? "none" : overlayText)}, Toggle Info Panel = {(panelText.Length == 0 ? "none" : panelText)}");
+            var i = (int)action;
+            var text = texts[i];
+            _errors[i] = null;
+            foreach (var other in Actions)
+            {
+                if (other != action && text.Length > 0 && texts[(int)other] == text)
+                {
+                    _errors[i] = $"{text} is also the {NameOf(other)} hotkey. Choose different ones; neither is active now.";
+                    break;
+                }
+            }
+
+            if (_errors[i] is null && HotkeyText.TryParse(text, out var parsed, out _))
+                keys[i] = parsed;
+            parts[i] = $"{NameOf(action)} = {(text.Length == 0 ? "none" : text)}{(_errors[i] is null ? string.Empty : " (not active: same as another)")}";
         }
 
-        _config = new HookConfig(overlayKey, panelKey);
+        _log.Write(_clock.UtcNow, "Hotkeys: " + string.Join(", ", parts));
 
-        if (overlayKey is null && panelKey is null)
+        _config = new HookConfig(keys);
+
+        if (Array.TrueForAll(keys, k => k is null))
             StopHookThread();
         else
             EnsureHooked();
 
-        if (OverlayError != oldOverlayError || PanelError != oldPanelError)
+        if (!oldErrors.SequenceEqual(_errors))
             StatusChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -256,8 +274,7 @@ public sealed class HotkeyManager : IDisposable
         if (!ReferenceEquals(config, _seenConfig))
         {
             _seenConfig = config;
-            _overlayHeld = false;
-            _panelHeld = false;
+            Array.Clear(_held);
         }
         return config;
     }
@@ -266,25 +283,16 @@ public sealed class HotkeyManager : IDisposable
     {
         var config = CurrentConfig();
 
-        if (config.Overlay is { } overlay && key == overlay.VirtualKey)
+        for (var i = 0; i < config.Keys.Length; i++)
         {
-            if (_overlayHeld && !IsDown(overlay.VirtualKey))
-                _overlayHeld = false;
-            if (!CaptureInProgress && !_overlayHeld && !WindowsKeyHeld() && HeldModifiers() == overlay.Modifiers)
+            if (config.Keys[i] is not { } hotkey || key != hotkey.VirtualKey)
+                continue;
+            if (_held[i] && !IsDown(hotkey.VirtualKey))
+                _held[i] = false;
+            if (!CaptureInProgress && !_held[i] && !WindowsKeyHeld() && HeldModifiers() == hotkey.Modifiers)
             {
-                _overlayHeld = true;
-                Post(HotkeyAction.ToggleOverlay);
-            }
-        }
-
-        if (config.Panel is { } panel && key == panel.VirtualKey)
-        {
-            if (_panelHeld && !IsDown(panel.VirtualKey))
-                _panelHeld = false;
-            if (!CaptureInProgress && !_panelHeld && !WindowsKeyHeld() && HeldModifiers() == panel.Modifiers)
-            {
-                _panelHeld = true;
-                Post(HotkeyAction.TogglePanel);
+                _held[i] = true;
+                Post((HotkeyAction)i);
             }
         }
     }
@@ -292,10 +300,9 @@ public sealed class HotkeyManager : IDisposable
     private void OnKeyUp(int key)
     {
         var config = CurrentConfig();
-        if (config.Overlay is { } overlay && key == overlay.VirtualKey)
-            _overlayHeld = false;
-        if (config.Panel is { } panel && key == panel.VirtualKey)
-            _panelHeld = false;
+        for (var i = 0; i < config.Keys.Length; i++)
+            if (config.Keys[i] is { } hotkey && key == hotkey.VirtualKey)
+                _held[i] = false;
     }
 
     private static HotkeyModifiers HeldModifiers()

@@ -523,10 +523,18 @@ public static class TrackAssigner
         var gate = settings.TrackWidthGateLines * lh;
         var distanceWidth = DistanceWidthOf(marker);
         widthChange = Math.Abs((line.Part?.Width ?? line.Box.Width) - distanceWidth);
-        if (line.Part is not null && widthChange > gate && Math.Abs(distanceWidth - marker.Width) < 0.5)
-            widthChange = Math.Abs(line.Box.Width - marker.Width);
+        if (UnionOnWholeWidth(marker, line, settings))
+            widthChange = Math.Abs(line.Box.Width - distanceWidth);
         return widthChange <= gate;
     }
+
+    private static bool UnionOnWholeWidth(MarkerRecord marker, FoundLine line, PipelineSettings settings) =>
+        line.Part is { } part && !PartialLine.HasSpeedGroup(marker, settings)
+        && Math.Abs(part.Width - DistanceWidthOf(marker)) > settings.TrackWidthGateLines * marker.Height;
+
+    public static bool StoresUnionPart(MarkerRecord marker, FoundLine line, PipelineSettings settings) =>
+        line.Part is not null
+        && (!UnionOnWholeWidth(marker, line, settings) || (marker.BornWithSpeedGroup && Math.Abs(DistanceWidthOf(marker) - marker.Width) < 0.5));
 
     private readonly record struct CheckContext(IReadOnlyList<KnownName>? KnownNames, int Places, double FrameMs);
 

@@ -332,7 +332,7 @@ public sealed class MarkerIndex
                 return;
             }
 
-        var record = MarkerRecord.Born(_nextId++, update.Line, update.FrameMs, update.Group);
+        var record = MarkerRecord.Born(_nextId++, update.Line, update.FrameMs, update.Group) with { BornWithSpeedGroup = update.SpeedGroup };
         TraceNew(update, record.Id, null);
         _records.Add(record);
         if (update.FirstRequest is { } spec)
@@ -342,7 +342,7 @@ public sealed class MarkerIndex
     private void TraceNew(NewMarkerUpdate update, int id, string? dropped)
     {
         if (Trace.Line(_traceNowMs, "idx", "new") is { } t)
-            Trace!.Write(t.Int("mid", id).Num("fms", update.FrameMs).Box("b", update.Line).Str("dropped", dropped).Text());
+            Trace!.Write(t.Int("mid", id).Num("fms", update.FrameMs).Box("b", update.Line).Bool("speed", update.SpeedGroup).Str("dropped", dropped).Text());
     }
 
     private void ApplyHit(TrackingHitUpdate update, double nowMs)

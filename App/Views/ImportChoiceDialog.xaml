@@ -4,6 +4,8 @@
         Title="IRIS &#8211; Import config"
         Width="500" SizeToContent="Height"
         ResizeMode="NoResize"
+        Background="{DynamicResource Iris.WindowBack}"
+        Foreground="{DynamicResource Iris.Text}"
         ShowInTaskbar="False">
 
     <StackPanel Margin="16">
@@ -11,12 +13,12 @@
         <TextBlock x:Name="SummaryText" TextWrapping="Wrap" Margin="0,0,0,12" />
 
         <StackPanel x:Name="ChoicesPanel">
-            <TextBlock Text="What should happen to your current lists?" Foreground="#616161" Margin="0,0,0,6" />
+            <TextBlock Text="What should happen to your current lists?" Foreground="{DynamicResource Iris.Hint}" Margin="0,0,0,6" />
 
             <Button Click="OnBackup" Margin="0,0,0,8" Padding="10,6" HorizontalContentAlignment="Left">
                 <StackPanel>
                     <TextBlock Text="Backup existing config" FontWeight="SemiBold" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#616161"
+                    <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}"
                                Text="Keeps a dated copy of your lists, then uses the imported ones." />
                 </StackPanel>
             </Button>
@@ -24,7 +26,7 @@
             <Button Click="OnMerge" Margin="0,0,0,8" Padding="10,6" HorizontalContentAlignment="Left">
                 <StackPanel>
                     <TextBlock Text="Merge config files" FontWeight="SemiBold" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#616161"
+                    <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}"
                                Text="Adds only new entries; where both have one, yours is kept." />
                 </StackPanel>
             </Button>
@@ -32,14 +34,14 @@
             <Button Click="OnReplace" Margin="0,0,0,8" Padding="10,6" HorizontalContentAlignment="Left">
                 <StackPanel>
                     <TextBlock Text="Replace existing config" FontWeight="SemiBold" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#616161"
+                    <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}"
                                Text="Overwrites your lists with the imported ones." />
                 </StackPanel>
             </Button>
         </StackPanel>
 
         <StackPanel x:Name="NoExistingPanel" Visibility="Collapsed">
-            <TextBlock TextWrapping="Wrap" Foreground="#616161" Margin="0,0,0,8"
+            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}" Margin="0,0,0,8"
                        Text="No saved lists yet: the import becomes your lists." />
             <Button Click="OnReplace" Margin="0,0,0,8" Padding="10,6" Content="Import" />
         </StackPanel>
