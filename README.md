@@ -30,7 +30,7 @@ Settings > Capture > Capture Method:
 - DD (Desktop Duplication), the default: has better frame rates and tracking. IRIS's overlay cannot be seen in streams, recordings and screenshots.
 - WGC (Windows Graphics Capture): allows "Show overlay in screenshots and recordings", so the overlay can appear in streams and recordings. It caps around 50 fps and tracks slightly worse.
 
-For better tracking, turn off Hardware-Accelerated GPU Scheduling (Windows Settings > System > Display > Graphics, then restart the PC). Turning on Nvidia Low Latency Mode or AMD Anti-Lag also offers a benefit.
+For better tracking, turn on Nvidia Low Latency Mode or AMD Anti-Lag.
 
 ## Lists
 
