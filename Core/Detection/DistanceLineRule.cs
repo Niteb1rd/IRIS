@@ -1,7 +1,10 @@
 
 namespace Iris.Core.Detection;
 
-public readonly record struct DistanceReading(string Text, double Value, bool Kilometers, bool HasSpeedGroup = false);
+public readonly record struct DistanceReading(string Text, double Value, bool Kilometers, bool HasSpeedGroup = false)
+{
+    public double Metres => Kilometers ? Value * 1000.0 : Value;
+}
 
 public static class DistanceLineRule
 {
@@ -16,9 +19,9 @@ public static class DistanceLineRule
 
         var first = 0;
         var last = pieces.Count - 1;
-        while (last > first && pieces[last].Score < settings.DistanceEndScore)
+        while (last > first && ScorePerLetter(pieces[last]) < settings.DistanceEndScore)
             last--;
-        while (first < last && pieces[first].Score < settings.DistanceEndScore)
+        while (first < last && ScorePerLetter(pieces[first]) < settings.DistanceEndScore)
             first++;
         if (first != 0 || last != pieces.Count - 1)
             pieces = pieces.Skip(first).Take(last - first + 1).ToList();
@@ -60,6 +63,8 @@ public static class DistanceLineRule
         var parsed = Parse(text.ToString(), settings.MaxDistanceValue);
         return parsed is { } reading ? reading with { HasSpeedGroup = speedGroup } : null;
     }
+
+    private static double ScorePerLetter(ReadPiece piece) => piece.Score / Math.Max(1, piece.Text.Length);
 
     public static DistanceReading? Parse(string text, int maxValue)
     {

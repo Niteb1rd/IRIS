@@ -100,6 +100,13 @@ public static class SocialConfigToml
 
     public static ConfigLoadResult Read(string text)
     {
+        if (TomlDepth.TooDeep(text))
+        {
+            var deep = new ConfigLoadResult();
+            deep.Errors.Add(TomlDepth.Error);
+            return deep;
+        }
+
         var doc = Toml.Parse(text);
         if (doc.HasErrors)
         {

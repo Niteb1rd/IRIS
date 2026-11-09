@@ -67,8 +67,21 @@ public sealed class WatchedFile
         {
             _ownWriteHash = hash;
             _appliedHash = hash;
+            WriteLastGood(text);
         }
-        WriteLastGood(text);
+    }
+
+    public bool TryAcceptExternal(string text, string hash)
+    {
+        lock (_hashGate)
+        {
+            if (Detector.KnownHash != hash)
+                return false;
+            _appliedHash = hash;
+            _ownWriteHash = null;
+            WriteLastGood(text);
+            return true;
+        }
     }
 
     public void WriteLastGood(string text)

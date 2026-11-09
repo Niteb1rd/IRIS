@@ -1,5 +1,6 @@
 
 using System.Runtime.InteropServices;
+using Iris.Core.Pipeline;
 using OpenCvSharp;
 
 namespace Iris.Core.Detection;
@@ -8,6 +9,75 @@ public sealed partial class NameplateDetector
 {
     private void BuildColorMask(Mat region, int scaleHeight)
     {
+        if (Workers is { Threads: > 1 } workers)
+        {
+            var tophatSize = ScaledOdd(scaleHeight, _settings.TopHatKernelPx);
+            var shrink = Scaled(scaleHeight, _settings.BackgroundShrinkPx);
+            var overlap = Math.Max((_settings.BackgroundBlur / 2 + 2) * shrink, 2 * tophatSize + 2);
+            var plan = MaskBands.Plan(region.Rows, workers.Threads, overlap, shrink);
+            if (plan.Count > 1)
+            {
+                BuildMaskInBands(region, scaleHeight, plan, workers);
+                return;
+            }
+        }
+
+        BuildWholeMask(region, scaleHeight);
+    }
+
+    private void BuildMaskInBands(Mat region, int scaleHeight, IReadOnlyList<MaskBand> plan, LowPriorityWorkers workers)
+    {
+        if (_bands is null || _bands.Length != plan.Count)
+        {
+            DisposeBands();
+            _bands = new NameplateDetector[plan.Count];
+            for (var i = 0; i < _bands.Length; i++)
+                _bands[i] = new NameplateDetector(_reader, _settings);
+        }
+
+        var countInk = ContrastSink is not null;
+        var bands = _bands;
+        workers.Run(plan.Count, i =>
+        {
+            using var part = new Mat(region, new Rect(0, plan[i].From, region.Cols, plan[i].Rows));
+            bands[i]._countContrastInk = countInk;
+            bands[i]._inkKeepFrom = plan[i].KeepFrom - plan[i].From;
+            bands[i]._inkKeepRows = plan[i].KeepRows;
+            bands[i].BuildWholeMask(part, scaleHeight);
+        });
+
+        _mask.Create(region.Rows, region.Cols, MatType.CV_8UC1);
+        var contrastInk = 0;
+        var sawContrast = false;
+        for (var i = 0; i < plan.Count; i++)
+        {
+            var band = plan[i];
+            using var kept = new Mat(bands[i]._mask, new Rect(0, band.KeepFrom - band.From, region.Cols, band.KeepRows));
+            using var target = new Mat(_mask, new Rect(0, band.KeepFrom, region.Cols, band.KeepRows));
+            kept.CopyTo(target);
+            if (bands[i]._lastContrastInk is { } ink)
+            {
+                contrastInk += ink;
+                sawContrast = true;
+            }
+        }
+
+        if (sawContrast)
+            ContrastSink?.AddContrastMask(Cv2.CountNonZero(_mask), contrastInk);
+    }
+
+    private void DisposeBands()
+    {
+        if (_bands is null)
+            return;
+        foreach (var band in _bands)
+            band.Dispose();
+        _bands = null;
+    }
+
+    private void BuildWholeMask(Mat region, int scaleHeight)
+    {
+        _lastContrastInk = null;
         var tophat = ScaledOdd(scaleHeight, _settings.TopHatKernelPx);
         var kernel = Kernel(tophat, tophat);
         Cv2.ExtractChannel(region, _blue, 0);
@@ -122,8 +192,20 @@ public sealed partial class NameplateDetector
         Cv2.BitwiseAnd(_ink, bright, _ink);
         mask.SetTo(Scalar.All(0), bright);
         Cv2.BitwiseOr(mask, _ink, mask);
+        if (_countContrastInk)
+            _lastContrastInk = InkInKeptRows(area);
         if (ContrastSink is { } sink)
             sink.AddContrastMask(Cv2.CountNonZero(_mask), Cv2.CountNonZero(_ink));
+    }
+
+    private int InkInKeptRows(Rect area)
+    {
+        var from = Math.Max(area.Y, _inkKeepFrom);
+        var to = Math.Min(area.Bottom, _inkKeepFrom + _inkKeepRows);
+        if (to <= from)
+            return 0;
+        using var kept = new Mat(_ink, new Rect(0, from - area.Y, _ink.Cols, to - from));
+        return Cv2.CountNonZero(kept);
     }
 
     private static Rect Padded(Rect bounds, int size, int cols, int rows)

@@ -375,6 +375,9 @@
                         <CheckBox x:Name="CheckForUpdatesCheck" Content="Check for updates on app start (api.github.com)" Margin="0,0,0,8"
                                   Checked="OnSettingChanged" Unchecked="OnSettingChanged" />
 
+                        <CheckBox x:Name="ResourceOverlayCheck" Content="Show IRIS's CPU, memory and GPU use on screen (drag it in the Interactive Overlay)" Margin="0,0,0,8"
+                                  Checked="OnSettingChanged" Unchecked="OnSettingChanged" />
+
                         <Grid Margin="0,0,0,16" HorizontalAlignment="Left">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />

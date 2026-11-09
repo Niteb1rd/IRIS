@@ -231,6 +231,7 @@ public partial class ConfigWindow
 
         _services.SetCurrentConfig(config);
         _baseline = Snapshot();
+        _services.NotifyListSaved();
         RefreshStateUi();
         return true;
     }

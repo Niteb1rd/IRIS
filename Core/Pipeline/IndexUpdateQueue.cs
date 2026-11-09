@@ -17,8 +17,6 @@ public sealed class IndexUpdateQueue : IUpdateSink, IDisposable
         _clock = clock;
     }
 
-    public WaitHandle Handle => _signal;
-
     public void Submit(IReadOnlyList<IndexUpdate> updates)
     {
         if (updates.Count == 0 || _disposed)

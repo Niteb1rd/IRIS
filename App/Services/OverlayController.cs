@@ -68,9 +68,13 @@ public sealed partial class OverlayController : IDisposable
         services.SettingsApplied += OnSettingsApplied;
         Hotkeys = new HotkeyManager(services.Log, services.Clock);
         Hotkeys.Pressed += OnHotkeyPressed;
+        Resources = new ResourceOverlay(services, () => _tracker.Current, Dispatcher.CurrentDispatcher);
+        Resources.Apply();
     }
 
     public HotkeyManager Hotkeys { get; }
+
+    internal ResourceOverlay Resources { get; }
 
     public event EventHandler? TestStateChanged;
 
@@ -300,6 +304,7 @@ public sealed partial class OverlayController : IDisposable
         foreach (var window in new[] { _testWindow, _panelWindow, _miningWindow })
             window?.SetVisibleInCapture(visibleInCapture);
         _bracketRenderer?.SetVisibleInCapture(visibleInCapture);
+        Resources.Apply();
         if (_timedRun.IsActive && !_services.Settings.OverlayDisabled)
             EndTimedRun(expired: false);
         Evaluate();
@@ -416,6 +421,7 @@ public sealed partial class OverlayController : IDisposable
             return;
         _disposed = true;
         _services.SettingsApplied -= OnSettingsApplied;
+        Resources.Dispose();
         Hotkeys.Pressed -= OnHotkeyPressed;
         Hotkeys.Dispose();
         _toastTimer.Stop();

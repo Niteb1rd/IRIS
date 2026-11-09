@@ -26,6 +26,8 @@ public sealed record MarkerRecord(int Id, double BornMs)
 
     public bool BornWithSpeedGroup { get; init; }
 
+    public double DistanceMetres { get; init; } = double.NaN;
+
     public double LineMs { get; init; } = double.NegativeInfinity;
 
     public double LastFoundMs { get; init; } = double.NegativeInfinity;

@@ -29,30 +29,40 @@ public sealed class RsiClient : IRsiClient
         _log = log ?? NullLog.Instance;
     }
 
+    public int LiveTurnsAvailable => _limiter.AvailableNow(allowBurst: true);
+
     public static HttpClient CreateHttpClient() => new(CreateHandler()) { Timeout = CacheSettings.RsiRequestTimeout };
 
-    public static HttpClientHandler CreateHandler() =>
-        new() { AllowAutoRedirect = false, AutomaticDecompression = DecompressionMethods.All };
+    public static SocketsHttpHandler CreateHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        AutomaticDecompression = DecompressionMethods.All,
+        PooledConnectionIdleTimeout = CacheSettings.RsiConnectionIdle,
+        PooledConnectionLifetime = CacheSettings.RsiConnectionLifetime,
+        KeepAlivePingPolicy = HttpKeepAlivePingPolicy.Always,
+        KeepAlivePingDelay = CacheSettings.RsiKeepAlivePing,
+        KeepAlivePingTimeout = CacheSettings.RsiKeepAliveTimeout,
+    };
 
-    public async Task<RsiResult<PlayerOrgs>> GetPlayerOrgsAsync(string handle, CancellationToken ct = default)
+    public async Task<RsiResult<PlayerOrgs>> GetPlayerOrgsAsync(string handle, CancellationToken ct = default, RsiLane lane = RsiLane.Background)
     {
         if (!RsiNames.IsValidHandle(handle))
             return Rejected<PlayerOrgs>("player page");
 
         var url = RsiUrls.PlayerOrgs(handle);
-        var response = await SendAsync(HttpMethod.Get, url, null, CacheSettings.RsiPlayerTimeout, ct).ConfigureAwait(false);
+        var response = await SendAsync(HttpMethod.Get, url, null, CacheSettings.RsiPlayerTimeout, ct, lane).ConfigureAwait(false);
         var result = Interpret(response, body => PlayerOrgsParser.Parse(body, handle));
         Finish(HttpMethod.Get, response, result.Status, result.Reason, null);
         return result;
     }
 
-    public async Task<RsiResult<PlayerProfile>> GetPlayerProfileAsync(string handle, CancellationToken ct = default)
+    public async Task<RsiResult<PlayerProfile>> GetPlayerProfileAsync(string handle, CancellationToken ct = default, RsiLane lane = RsiLane.Background)
     {
         if (!RsiNames.IsValidHandle(handle))
             return Rejected<PlayerProfile>("profile page");
 
         var url = RsiUrls.PlayerProfile(handle);
-        var response = await SendAsync(HttpMethod.Get, url, null, CacheSettings.RsiPlayerTimeout, ct).ConfigureAwait(false);
+        var response = await SendAsync(HttpMethod.Get, url, null, CacheSettings.RsiPlayerTimeout, ct, lane).ConfigureAwait(false);
         var result = Interpret(response, body => ProfilePageParser.Parse(body, handle));
         Finish(HttpMethod.Get, response, result.Status, result.Reason, null);
         if (result.Data is { HasRecordLabel: false } && Interlocked.Exchange(ref _profileLabelMissingLogged, 1) == 0)
@@ -60,13 +70,13 @@ public sealed class RsiClient : IRsiClient
         return result;
     }
 
-    public async Task<RsiResult<OrgInfo>> GetOrgInfoAsync(string sid, CancellationToken ct = default)
+    public async Task<RsiResult<OrgInfo>> GetOrgInfoAsync(string sid, CancellationToken ct = default, RsiLane lane = RsiLane.Background)
     {
         if (!RsiNames.IsValidSid(sid))
             return Rejected<OrgInfo>("org page");
 
         var url = RsiUrls.OrgPage(sid);
-        var response = await SendAsync(HttpMethod.Get, url, null, CacheSettings.RsiOrgTimeout, ct).ConfigureAwait(false);
+        var response = await SendAsync(HttpMethod.Get, url, null, CacheSettings.RsiOrgTimeout, ct, lane).ConfigureAwait(false);
         var result = Interpret(response, body => OrgPageParser.Parse(body, sid));
         Finish(HttpMethod.Get, response, result.Status, result.Reason, null);
         if (result.Data?.UnknownActivities is { } unknown)
@@ -96,7 +106,8 @@ public sealed class RsiClient : IRsiClient
             else
                 result = Interpret<OrgMembersPage>(response, OrgMembersParser.ParseResponse);
             NoteAnswer(response);
-            NoteBreaker(response, result.Status);
+            if (!OrgMembersParser.IsRefusal(result.Reason))
+                NoteBreaker(response, result.Status);
 
             if (result.Status == RsiStatus.Found || attempt >= 2 || response.Paused)
                 break;
@@ -145,12 +156,19 @@ public sealed class RsiClient : IRsiClient
         string Url, int? StatusCode, string? Body, string? Error,
         TimeSpan Elapsed = default, TimeSpan? RetryAfter = null, bool NetworkProblem = false, long? Turn = null, bool Paused = false);
 
-    private async Task<Response> SendAsync(HttpMethod method, string url, string? jsonBody, TimeSpan requestTimeout, CancellationToken ct)
+    private Response? PausedAnswer(string url)
     {
         if (_breaker.IsOpen(_clock.UtcNow, out var remaining, out var justClosed))
             return new Response(url, null, null, $"paused: too many unreadable or forbidden answers, RSI requests resume in {Math.Ceiling(remaining.TotalSeconds):0} s", Paused: true);
         if (justClosed)
             Log($"RSI requests resume: the {CacheSettings.RsiBreakerPause.TotalMinutes:0} minute pause is over");
+        return null;
+    }
+
+    private async Task<Response> SendAsync(HttpMethod method, string url, string? jsonBody, TimeSpan requestTimeout, CancellationToken ct, RsiLane lane = RsiLane.Background)
+    {
+        if (PausedAnswer(url) is { } paused)
+            return paused;
 
         var current = url;
         for (int hop = 0; hop <= CacheSettings.RsiMaxRedirects; hop++)
@@ -158,14 +176,16 @@ public sealed class RsiClient : IRsiClient
             if (!Uri.TryCreate(current, UriKind.Absolute, out var uri) || !RsiUrls.IsAllowed(uri))
                 return new Response(current, null, null, "blocked: only https://robertsspaceindustries.com may be contacted");
 
-            var turn = await _limiter.WaitForTurnAsync(ct).ConfigureAwait(false);
+            var turn = await _limiter.WaitForTurnAsync(ct, allowBurst: lane == RsiLane.Live).ConfigureAwait(false);
+            if (PausedAnswer(current) is { } pausedWhileWaiting)
+                return pausedWhileWaiting;
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(requestTimeout);
             var stopwatch = Stopwatch.StartNew();
             try
             {
-                using var request = new HttpRequestMessage(method, uri);
+                using var request = new HttpRequestMessage(method, uri) { Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionOrLower };
                 request.Headers.TryAddWithoutValidation("User-Agent", CacheSettings.BrowserUserAgent);
                 request.Headers.TryAddWithoutValidation("Accept-Language", "en");
                 if (jsonBody is not null)
@@ -205,15 +225,15 @@ public sealed class RsiClient : IRsiClient
             }
             catch (OperationCanceledException)
             {
-                return new Response(uri.AbsoluteUri, null, null, $"timeout after {requestTimeout.TotalSeconds:0} s", stopwatch.Elapsed, null, NetworkProblem: true);
+                return new Response(uri.AbsoluteUri, null, null, $"timeout after {requestTimeout.TotalSeconds:0} s", stopwatch.Elapsed, null, NetworkProblem: true, Turn: turn);
             }
             catch (HttpRequestException ex)
             {
-                return new Response(uri.AbsoluteUri, null, null, $"network error: {ex.Message}", stopwatch.Elapsed, null, NetworkProblem: true);
+                return new Response(uri.AbsoluteUri, null, null, $"network error: {ex.Message}", stopwatch.Elapsed, null, NetworkProblem: true, Turn: turn);
             }
             catch (IOException ex)
             {
-                return new Response(uri.AbsoluteUri, null, null, $"network error: {ex.Message}", stopwatch.Elapsed, null, NetworkProblem: true);
+                return new Response(uri.AbsoluteUri, null, null, $"network error: {ex.Message}", stopwatch.Elapsed, null, NetworkProblem: true, Turn: turn);
             }
             catch (Exception ex)
             {
@@ -271,7 +291,7 @@ public sealed class RsiClient : IRsiClient
         if (response.StatusCode is { } code)
         {
             if (code == 429 || code == 403 || code >= 500)
-                change = _limiter.ReportThrottled(response.RetryAfter);
+                change = _limiter.ReportThrottled(response.RetryAfter, response.Turn);
             else if ((code >= 200 && code <= 299) || code == 404)
                 change = _limiter.ReportSuccess(response.Turn);
             else
@@ -279,7 +299,7 @@ public sealed class RsiClient : IRsiClient
         }
         else if (response.NetworkProblem)
         {
-            change = _limiter.ReportThrottled();
+            change = _limiter.ReportThrottled(null, response.Turn);
         }
         else
         {

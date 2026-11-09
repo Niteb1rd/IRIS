@@ -125,8 +125,8 @@ public static class ConfigPoller
                 if (change.Hash == file.OwnWriteHash || change.Hash == file.AppliedHash)
                     return new SocialListPoll(PollKind.Restored, parsed, change.Hash);
 
-                file.WriteLastGood(change.Text!);
-                file.AppliedHash = change.Hash;
+                if (!file.TryAcceptExternal(change.Text!, change.Hash!))
+                    return new SocialListPoll(PollKind.Nothing);
                 return new SocialListPoll(PollKind.Applied, parsed, change.Hash);
 
             default:
@@ -150,8 +150,8 @@ public static class ConfigPoller
                 if (change.Hash == file.OwnWriteHash || change.Hash == file.AppliedHash)
                     return new SettingsPoll(PollKind.Restored, parsed, change.Hash);
 
-                file.WriteLastGood(change.Text!);
-                file.AppliedHash = change.Hash;
+                if (!file.TryAcceptExternal(change.Text!, change.Hash!))
+                    return new SettingsPoll(PollKind.Nothing);
                 return new SettingsPoll(PollKind.Applied, parsed, change.Hash);
 
             default:

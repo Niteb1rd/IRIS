@@ -22,6 +22,18 @@ public sealed class CacheSettings
 
     public static readonly TimeSpan RsiDefaultInterval = TimeSpan.FromSeconds(1);
 
+    public const int RsiLiveBurst = 5;
+
+    public static readonly TimeSpan RsiBurstCooldown = TimeSpan.FromSeconds(60);
+
+    public static readonly TimeSpan RsiConnectionIdle = TimeSpan.FromMinutes(5);
+
+    public static readonly TimeSpan RsiConnectionLifetime = TimeSpan.FromMinutes(15);
+
+    public static readonly TimeSpan RsiKeepAlivePing = TimeSpan.FromSeconds(30);
+
+    public static readonly TimeSpan RsiKeepAliveTimeout = TimeSpan.FromSeconds(10);
+
     public static readonly TimeSpan RsiMaxBackoff = TimeSpan.FromSeconds(30);
 
     public static readonly TimeSpan RsiMaxRetryAfter = TimeSpan.FromSeconds(120);
@@ -35,7 +47,7 @@ public sealed class CacheSettings
 
     public static readonly TimeSpan OrgRetrySecond = TimeSpan.FromMinutes(5);
 
-    public const int OrgFetchMaxFailures = 3;
+    public static readonly TimeSpan OrgRetryAfterRepeatedFailures = TimeSpan.FromMinutes(30);
 
     public static readonly TimeSpan LiveWaitingExpiry = TimeSpan.FromSeconds(10);
 
@@ -77,6 +89,8 @@ public sealed class CacheSettings
     public const int UpdateDownloadMaxRedirects = 3;
 
     public static readonly TimeSpan UpdateDownloadTimeout = TimeSpan.FromMinutes(5);
+
+    public static readonly TimeSpan UpdateDownloadStallTimeout = TimeSpan.FromSeconds(60);
 
     public const long UpdateDownloadMaxBytes = 200L * 1024 * 1024;
 

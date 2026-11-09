@@ -14,6 +14,8 @@ public sealed record NameAnswer(RsiState State, IReadOnlyList<OrgMembership>? Or
 
 public interface INameSource
 {
+    int LiveTurnsAvailable => int.MaxValue;
+
     NameAnswer? Stored(string name);
 
     Task<NameAnswer?> AskRsiAsync(string name, SocialConfig config, CancellationToken ct);

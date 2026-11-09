@@ -102,11 +102,5 @@ public static class ColorRanks
         return new RankFix(fixedConfig, HasConflict(orgRows), HasConflict(ruleRows));
     }
 
-    public static bool IsNormalized(SocialConfig config)
-    {
-        var normalized = Normalize(config).Config;
-        return normalized.Orgs.SequenceEqual(config.Orgs) && normalized.OrgRules.SequenceEqual(config.OrgRules);
-    }
-
     private static IEnumerable<OrgAttributeRule> UserRules(SocialConfig config) => config.OrgRules.Where(r => r.Kind != AttributeKind.NoMatch);
 }

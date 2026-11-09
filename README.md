@@ -11,7 +11,7 @@ IRIS.exe is not code-signed, so Windows SmartScreen may show "Windows protected 
 ## Quick start
 
 1. Run IRIS-installer.exe, or unzip IRIS-portable.zip to an IRIS folder.
-2. Run IRIS.exe. The first time Windows may ask to install the Microsoft .NET, accept.
+2. Run IRIS.exe. The first time Windows may ask to install the Microsoft .NET Desktop Runtime, accept.
 3. Set Star Citizen Window Mode to Borderless (Sorry other modes do not work).
 4. In game, use Shift+F12 (default) to toggle On/Off IRIS and Shift+0 (zero, default) to toggle the Interactive Overlay.
 5. To change settings, right-click the IRIS tray icon and choose Settings: Change Capture, Tracking, Overlay settings, Import/Export list configs, edit hotkeys.
@@ -19,7 +19,7 @@ IRIS.exe is not code-signed, so Windows SmartScreen may show "Windows protected 
 ## Requirements
 
 - Windows 10 version 2004 or later. Windows 11 to hide WGC yellow video capture border
-- Microsoft .NET 8
+- Microsoft .NET 10 Desktop Runtime
 - Star Citizen in Borderless mode.
 
 ## How it works
@@ -33,6 +33,12 @@ Settings > Capture > Capture Method:
 For better tracking, turn off Hardware-Accelerated GPU Scheduling (Windows Settings > System > Display > Graphics, then restart the PC). Turning on Nvidia Low Latency Mode or AMD Anti-Lag also offers a benefit.
 
 Names read best with Chromatic Aberration turned off in Star Citizen's graphics settings. IRIS shows a note in the side panel when it finds it on.
+
+Very bright backgrounds, such as a planet in daylight, are the hardest case. IRIS remembers players it has already identified for up to 30 seconds while it can still read their distance, so a bracket that disappears comes back with the right name and colour once the plate can be followed again. New names may not be read until the plate is over something darker.
+
+## CPU, memory and GPU readout
+
+Off by default. Turn it on in Settings > Settings, "Show IRIS's CPU, memory and GPU use on screen". Small numbers then appear just below the top right of the screen, updated once a second. They show what IRIS itself is using, not the game. To move them, open the Interactive Overlay (Shift+0 by default) and drag the highlighted box.
 
 ## Lists
 
@@ -69,7 +75,7 @@ Nothing else is sent anywhere.
 
 ## Updating
 
-With "Check for updates" on (the default), IRIS asks at start when a new version is out and can update itself; it restarts when done.
+With "Check for updates" on (the default), IRIS asks at start when a new version is out and can update itself; it restarts when done. If a new version needs a .NET Desktop Runtime this PC does not have, a message offers to download it when IRIS restarts. Accept, install the runtime from the page that opens, then start IRIS again. Your lists and settings are kept.
 
 By hand: run the new IRIS-installer.exe, or download IRIS-portable.zip and copy its IRIS.exe and \Data folder to your current folder.
 

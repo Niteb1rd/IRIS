@@ -48,6 +48,12 @@ public sealed partial class InteractiveOverlay : IInteractiveHost, IDisposable
 
     public SocialConfig Config => _services.CurrentConfig;
 
+    public bool NotesUnreadable => _services.NotesUnreadable;
+
+    public Iris.Core.Overlay.PixelRect? ResourceOverlayBox => _overlay.Resources.Box;
+
+    public void MoveResourceOverlay(double screenX, double screenY, bool save) => _overlay.Resources.MoveTo(screenX, screenY, save);
+
     private void OnRequested(object? sender, EventArgs e)
     {
         if (_disposed)
@@ -118,6 +124,7 @@ public sealed partial class InteractiveOverlay : IInteractiveHost, IDisposable
         {
             if (ReferenceEquals(_window, window))
                 _window = null;
+            _overlay.Resources.CancelDrag();
         };
         window.Show();
         _windowHandle = new System.Windows.Interop.WindowInteropHelper(window).Handle;

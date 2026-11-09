@@ -57,6 +57,7 @@ public partial class ConfigWindow
         _hideBorderStored = settings.HideCaptureBorder;
         ShowCaptureControls();
         CheckForUpdatesCheck.IsChecked = settings.CheckForUpdates;
+        ResourceOverlayCheck.IsChecked = settings.ShowResourceOverlay;
         MiningDisabledCheck.IsChecked = settings.MiningDisabled;
         MiningZoomSlider.Value = settings.MiningLabelZoomPercent;
         WindowScaleCombo.SelectedIndex = ScaleIndex(settings.SettingsWindowScale);
@@ -103,6 +104,7 @@ public partial class ConfigWindow
         OverlayVisibleInCapture = OverlayVisibleInCaptureCheck.IsEnabled ? OverlayVisibleInCaptureCheck.IsChecked == true : _visibleInCaptureStored,
         HideCaptureBorder = HideCaptureBorderCheck.IsEnabled ? HideCaptureBorderCheck.IsChecked == true : _hideBorderStored,
         CheckForUpdates = CheckForUpdatesCheck.IsChecked == true,
+        ShowResourceOverlay = ResourceOverlayCheck.IsChecked == true,
         MiningDisabled = MiningDisabledCheck.IsChecked == true,
         MiningLabelZoomPercent = (int)Math.Round(MiningZoomSlider.Value),
         SettingsWindowScale = WindowScaleCombo.SelectedIndex >= 0

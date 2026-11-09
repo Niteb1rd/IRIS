@@ -185,15 +185,6 @@ public sealed class FrameHub : IDisposable
         }
     }
 
-    public int FreeCount
-    {
-        get
-        {
-            lock (_gate)
-                return _free.Count;
-        }
-    }
-
     public CapturedFrame? Rent()
     {
         CapturedFrame frame;

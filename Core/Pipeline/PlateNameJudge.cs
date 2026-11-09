@@ -59,6 +59,8 @@ public sealed class PlateNameJudge : IReadJudge
         return NameClass.Valid;
     }
 
+    public bool IsKnownPlayer(string name) => MemoizedOrgs(name) is not null || IsListed(name);
+
     public bool IsListed(string name)
     {
         if (_listed.TryGetValue(name, out var known) && NowMs - known.AtMs < _live.OrgCacheMs)

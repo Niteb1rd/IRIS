@@ -1,12 +1,21 @@
 namespace Iris.Core.Lookup;
 
+public enum RsiLane
+{
+    Background,
+
+    Live,
+}
+
 public interface IRsiClient
 {
-    Task<RsiResult<PlayerOrgs>> GetPlayerOrgsAsync(string handle, CancellationToken ct = default);
+    int LiveTurnsAvailable => int.MaxValue;
 
-    Task<RsiResult<OrgInfo>> GetOrgInfoAsync(string sid, CancellationToken ct = default);
+    Task<RsiResult<PlayerOrgs>> GetPlayerOrgsAsync(string handle, CancellationToken ct = default, RsiLane lane = RsiLane.Background);
 
-    Task<RsiResult<PlayerProfile>> GetPlayerProfileAsync(string handle, CancellationToken ct = default);
+    Task<RsiResult<OrgInfo>> GetOrgInfoAsync(string sid, CancellationToken ct = default, RsiLane lane = RsiLane.Background);
+
+    Task<RsiResult<PlayerProfile>> GetPlayerProfileAsync(string handle, CancellationToken ct = default, RsiLane lane = RsiLane.Background);
 
     Task<RsiResult<OrgMembers>> GetOrgMembersAsync(string sid, CancellationToken ct = default);
 }

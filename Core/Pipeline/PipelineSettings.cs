@@ -6,7 +6,9 @@ public sealed record PipelineSettings
 
     public static PipelineSettings Default { get; } = new();
 
-    public double ScanHz { get; init; } = 4.0;
+    public double ScanHz { get; init; } = 8.0;
+
+    public double PlateCheckHz { get; init; } = 4.0;
 
     public double PlateHz { get; init; } = 12.0;
 
@@ -15,6 +17,10 @@ public sealed record PipelineSettings
     public int ConfirmReads { get; init; } = 3;
 
     public double ConfirmSpanMs { get; init; } = 150.0;
+
+    public int KnownConfirmReads { get; init; } = 2;
+
+    public double KnownConfirmSpanMs { get; init; } = 60.0;
 
     public double StableWidthLines { get; init; } = 0.3;
 
@@ -27,6 +33,8 @@ public sealed record PipelineSettings
     public int ConfirmedCheckFails { get; init; } = 4;
 
     public int ConfirmedNoTrackChecks { get; init; } = 6;
+
+    public double ConfirmedHoldMaxMs { get; init; } = 30000.0;
 
     public double StoppedTrackHz { get; init; } = 24.0;
 
@@ -162,7 +170,7 @@ public sealed record PipelineSettings
 
     public double ReadRequestMs { get; init; } = 83.0;
 
-    public double ScanRequestMs { get; init; } = 250.0;
+    public double ScanRequestMs { get; init; } = 125.0;
 
     public double FreshnessMinMs { get; init; } = 60.0;
 
@@ -332,6 +340,8 @@ public sealed record PipelineSettings
     {
         if (!(ScanHz > 0 && PlateHz >= ScanHz))
             return "ScanHz must be above 0 and at most PlateHz.";
+        if (!(PlateCheckHz > 0) || KnownConfirmReads < 1 || KnownConfirmReads > ConfirmReads || KnownConfirmSpanMs < 0)
+            return "PlateCheckHz must be above 0, KnownConfirmReads between 1 and ConfirmReads, and KnownConfirmSpanMs must not be negative.";
         if (MaxReadsPerTick < 1 || ConfirmReads < 1 || StopReads < 1 || UnconfirmedCheckFails < 1 || ConfirmedCheckFails < 1 || ConfirmedNoTrackChecks < 1 || IgnoredReadsLimit < 1)
             return "The read and check counts must be at least 1.";
         if (ConfirmSpanMs < 0 || StableWidthLines < 0 || !(StoppedTrackHz > 0))

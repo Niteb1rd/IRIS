@@ -15,6 +15,7 @@ public sealed partial class ScanWorker
         _templateWhy = null;
         _templateDistLh = _templateReachLh = double.NaN;
         _templateMoved = false;
+        _heldInPlace = false;
         _checkTries = _failOwnName = _failOtherPlate = _failOther = 0;
         var fresh = marker.LineMs >= frameMs;
         var (ppx, ppy, predictedMargin, _) = marker.Predict(frameMs, _predict);
@@ -141,8 +142,12 @@ public sealed partial class ScanWorker
             _templateMoved = true;
         }
 
-        var fails = distanceRead || kept ? 0 : _fails.GetValueOrDefault(marker.Id) + 1;
-        var lost = tracked || kept ? 0 : _lost.GetValueOrDefault(marker.Id) + 1;
+        if (tracked || kept)
+            _holdSinceMs.Remove(marker.Id);
+        var landedElsewhere = reanchor && (anchor is null || !verified) && read is { } landed && BoxMath.Overlap(landed, expected) <= 0.0;
+        _heldInPlace = (!distanceRead || landedElsewhere) && !kept && ReadsInPlace(marker, crop, expected, frameMs, tracked, snapshot);
+        var fails = distanceRead || kept || _heldInPlace ? 0 : _fails.GetValueOrDefault(marker.Id) + 1;
+        var lost = tracked || kept || _heldInPlace ? 0 : _lost.GetValueOrDefault(marker.Id) + 1;
         _fails[marker.Id] = fails;
         _lost[marker.Id] = lost;
         TraceCheck(marker, frameMs, px, py, margin, read, verified ? anchor : null, tracked, kept, verified, fails, lost);
@@ -154,6 +159,25 @@ public sealed partial class ScanWorker
             else
                 _stats?.AddEndConfirmedNoTracking();
         }
+    }
+
+    private bool ReadsInPlace(MarkerRecord marker, CropImage crop, PixelRect expected, double frameMs, bool tracked, IndexSnapshot snapshot)
+    {
+        if (_holdSinceMs.TryGetValue(marker.Id, out var since) && frameMs - since >= _settings.ConfirmedHoldMaxMs)
+            return false;
+        if (ReanchorTakesAnotherPlate(marker, expected, false, frameMs, snapshot))
+            return false;
+        var started = Stopwatch.GetTimestamp();
+        var read = Ops.ReadDistance(crop, expected);
+        _checkReadTicks += Stopwatch.GetTimestamp() - started;
+        if (read)
+        {
+            _stats?.AddInPlaceHold();
+            if (!tracked)
+                _holdSinceMs.TryAdd(marker.Id, frameMs);
+        }
+
+        return read;
     }
 
     private void CountTries(MarkerRecord marker, PixelRect? ownName, bool found, double frameMs, IndexSnapshot snapshot)
@@ -183,7 +207,7 @@ public sealed partial class ScanWorker
         t.Int("seq", _frameSeq).Num("fms", frameMs).Int("mid", marker.Id).Str("st", marker.Status.ToString()).Box("line", marker.Line).Num("lastFound", marker.LastFoundMs)
             .Num("px", px).Num("py", py).Num("margin", margin).Bool("tracked", tracked).Bool("read", read is not null).Bool("kept", kept).Bool("verified", verified)
             .Bool("following", _keep.TryGetValue(marker.Id, out var keep) && keep.Following).Num("tplScore", _templateScore, 3).Str("tplWhy", _templateWhy)
-            .Num("tplDistLh", _templateDistLh, 2).Num("tplReachLh", _templateReachLh, 2).Bool("tplMove", _templateMoved)
+            .Num("tplDistLh", _templateDistLh, 2).Num("tplReachLh", _templateReachLh, 2).Bool("tplMove", _templateMoved).Bool("held", _heldInPlace)
             .Int("tries", _checkTries).Int("failOwnName", _failOwnName).Int("failOtherPlate", _failOtherPlate).Int("failOther", _failOther)
             .Int("fails", fails).Int("noTrack", lost);
         if (read is { } r)

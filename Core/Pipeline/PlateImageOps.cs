@@ -33,6 +33,8 @@ public interface IPlateImageOps
 
     IReadOnlyCollection<PixelRect> LastScanSpeedGroups => Array.Empty<PixelRect>();
 
+    IReadOnlyDictionary<PixelRect, double> LastScanDistances => new Dictionary<PixelRect, double>();
+
     LayerCheck? Layers => null;
 
     IReadOnlyList<PixelRect> Scan(CropImage scan);
@@ -59,11 +61,13 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
     private readonly PlateSeedBuilder _seeds;
     private readonly NameplateDetectorSettings _cropSettings;
     private readonly int _windowHeight;
-    private readonly Mat _bgrBox = new();
+    private readonly int _helpers;
+    private LowPriorityWorkers? _scanWorkers;
     private readonly List<PixelRect> _tried = new();
 
-    public DetectorImageOps(NameplateReader reader, ScanGeometry geometry, NameplateDetectorSettings baseSettings, IContrastMaskSink? contrastSink = null)
+    public DetectorImageOps(NameplateReader reader, ScanGeometry geometry, NameplateDetectorSettings baseSettings, IContrastMaskSink? contrastSink = null, int helpers = LiveSettings.ScanHelpers)
     {
+        _helpers = helpers;
         Geometry = geometry;
         _windowHeight = geometry.WindowHeight;
         _cropSettings = baseSettings with { RegionLeft = 0.0, RegionRight = 1.0, RegionTop = 0.0, RegionBottom = 1.0, ScaleHeight = geometry.WindowHeight };
@@ -85,25 +89,28 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
         var origin = scan.Origin;
         var found = new List<PixelRect>();
         var foundSpeedGroups = new HashSet<PixelRect>();
+        var foundDistances = new Dictionary<PixelRect, double>();
+        var metresByLine = new Dictionary<int, double>();
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (_helpers > 0)
+            _scanDetector.Workers = _scanWorkers ??= new LowPriorityWorkers(_helpers);
         var candidates = _scanDetector.FindCandidates(scan.Image);
         var candidatesMs = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         var maskMs = _scanDetector.LastMaskMs;
         var boxes = candidates.Boxes;
         var memo = new Dictionary<int, bool>();
         var speedGroups = new HashSet<int>();
-        bool DistanceOk(int line)
+        bool Remember(int line, DistanceReading? reading)
         {
-            if (!memo.TryGetValue(line, out var ok))
-            {
-                var reading = ReadsAsDistance(scan.Image, boxes[line]);
-                memo[line] = ok = reading is not null;
-                if (reading is { HasSpeedGroup: true })
-                    speedGroups.Add(line);
-            }
-
-            return ok;
+            memo[line] = reading is not null;
+            if (reading is { HasSpeedGroup: true })
+                speedGroups.Add(line);
+            if (reading is { } parsed)
+                metresByLine[line] = parsed.Metres;
+            return reading is not null;
         }
+
+        bool DistanceOk(int line) => memo.TryGetValue(line, out var ok) ? ok : Remember(line, ReadsAsDistance(scan.Image, boxes[line]));
 
         var trackedMemo = new Dictionary<int, bool>();
         bool Tracked(int line)
@@ -137,6 +144,18 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
         {
             Index(pair.Top, pair);
             Index(pair.Bottom, pair);
+        }
+
+        if (_scanWorkers is { } workers)
+        {
+            var ahead = ordered.Select(pair => pair.Bottom).Distinct().Where(line => !Tracked(line)).ToList();
+            if (ahead.Count > 1)
+            {
+                var readings = new DistanceReading?[ahead.Count];
+                workers.Run(ahead.Count, i => readings[i] = ReadsAsDistance(scan.Image, boxes[ahead[i]]));
+                for (var i = 0; i < ahead.Count; i++)
+                    Remember(ahead[i], readings[i]);
+            }
         }
 
         var taken = new HashSet<int>();
@@ -179,10 +198,13 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
                 found.Add(rect);
                 if (speedGroups.Contains(bottom))
                     foundSpeedGroups.Add(rect);
+                if (metresByLine.TryGetValue(bottom, out var metres))
+                    foundDistances[rect] = metres;
             }
         }
 
         LastScanSpeedGroups = foundSpeedGroups;
+        LastScanDistances = foundDistances;
         LastScanParts = new ScanParts(maskMs, candidatesMs - maskMs, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds - candidatesMs);
         return found;
     }
@@ -194,6 +216,8 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
     public IReadOnlyList<PixelRect> LastCheckTried => _tried;
 
     public IReadOnlyCollection<PixelRect> LastScanSpeedGroups { get; private set; } = Array.Empty<PixelRect>();
+
+    public IReadOnlyDictionary<PixelRect, double> LastScanDistances { get; private set; } = new Dictionary<PixelRect, double>();
 
     private DistanceReading? ReadsAsDistance(Mat image, Rect box)
     {
@@ -207,8 +231,9 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
         if (x1 <= x0 || y1 <= y0)
             return null;
         using var area = new Mat(image, new Rect(x0, y0, x1 - x0, y1 - y0));
-        Cv2.CvtColor(area, _bgrBox, ColorConversionCodes.BGRA2BGR);
-        return _scanDetector.ReadDistanceLine(_bgrBox, new Rect(box.X - x0, box.Y - y0, box.Width, box.Height));
+        using var bgr = new Mat();
+        Cv2.CvtColor(area, bgr, ColorConversionCodes.BGRA2BGR);
+        return _scanDetector.ReadDistanceLine(bgr, new Rect(box.X - x0, box.Y - y0, box.Width, box.Height));
     }
 
     public PixelRect? Check(CheckItem item)
@@ -267,8 +292,6 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
             return false;
         return _cropDetector.ReadDistanceLine(image, new Rect(left, top, right - left, bottom - top)) is not null;
     }
-
-    public bool ReadDistanceNear(CropImage crop, PixelRect expected, double margin) => ReadNear(crop, expected, margin).Ok;
 
     public NearRead ReadNear(CropImage crop, PixelRect expected, double margin)
     {
@@ -376,7 +399,7 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
         if (centred.Count > 0)
             return new ReadResult(ObservationClass.Unclear, "leftcol");
         if (off.Count > 0)
-            return new ReadResult(ObservationClass.Stop, ReadResult.OffCentre);
+            return new ReadResult(HasBrightBackground(image) ? ObservationClass.Unclear : ObservationClass.Stop, ReadResult.OffCentre);
         return new ReadResult(ObservationClass.Unclear, "nothing");
     }
 
@@ -393,7 +416,7 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
         _scanDetector.Dispose();
         _cropDetector.Dispose();
         _seeds.Dispose();
-        _bgrBox.Dispose();
+        _scanWorkers?.Dispose();
     }
 
     private ReadResult ReadPair(Mat image, Rect origin, NameplateCandidates candidates, int top, int bottom)
@@ -475,6 +498,15 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
         var lowest = rows.OrderByDescending(r => r.Y).First();
         var nameLine = new NameLineInfo(lowest.Width, lowest.Height, line.Y - lowest.Y, _cropDetector.InkColour(image, lowest), _cropDetector.ColumnInk(lowest));
         return new ReadResult(ObservationClass.Name, string.Empty, text, glyphs, Window(line), rows.Select(Window).ToList(), color, nameLine);
+    }
+
+    private static bool HasBrightBackground(Mat image)
+    {
+        var dimLimit = NameplateDetectorSettings.BrightBackgroundValue - 1;
+        using var dim = new Mat();
+        Cv2.InRange(image, Scalar.All(0), new Scalar(dimLimit, dimLimit, dimLimit, 255), dim);
+        var pixels = image.Rows * image.Cols;
+        return pixels - Cv2.CountNonZero(dim) >= NameplateDetectorSettings.BrightBackgroundShare * pixels;
     }
 
     private static ReadResult Bad(NameRowRead read) =>

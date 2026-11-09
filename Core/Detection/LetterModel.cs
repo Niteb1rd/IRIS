@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Text;
 
 namespace Iris.Core.Detection;
@@ -21,7 +22,7 @@ public sealed class LetterModel
         {
             Rows = rows;
             Cols = cols;
-            Weights = weights;
+            Weights = Array.ConvertAll(weights, weight => (double)weight);
             Biases = biases;
         }
 
@@ -29,7 +30,7 @@ public sealed class LetterModel
 
         public int Cols { get; }
 
-        public float[] Weights { get; }
+        public double[] Weights { get; }
 
         public float[] Biases { get; }
     }
@@ -151,9 +152,7 @@ public sealed class LetterModel
                 var x = current[i];
                 if (x == 0.0)
                     continue;
-                var offset = i * cols;
-                for (var j = 0; j < cols; j++)
-                    next[j] += x * weights[offset + j];
+                AddScaled(next, x, weights.AsSpan(i * cols, cols));
             }
 
             if (l < _layers.Length - 1)
@@ -180,6 +179,20 @@ public sealed class LetterModel
                     logProbs[j] = Math.Log(Math.Clamp(next[j] / sum, MinProbability, 1.0));
             }
         }
+    }
+
+    private static void AddScaled(Span<double> target, double scale, ReadOnlySpan<double> source)
+    {
+        var j = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            var factor = new Vector<double>(scale);
+            for (; j <= target.Length - Vector<double>.Count; j += Vector<double>.Count)
+                (new Vector<double>(target.Slice(j)) + factor * new Vector<double>(source.Slice(j))).CopyTo(target.Slice(j));
+        }
+
+        for (; j < target.Length; j++)
+            target[j] += scale * source[j];
     }
 
     public double[] PredictLogProbs(ReadOnlySpan<double> input)

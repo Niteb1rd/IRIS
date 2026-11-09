@@ -20,8 +20,6 @@ public sealed partial class MarkerIndex
     private long _nextRequestId = 1;
     private long _version;
     private double _newFrameMs = double.NegativeInfinity;
-    private double _nameConfirmedMs = double.NegativeInfinity;
-    private double _settingsChangedMs = double.NegativeInfinity;
     private double _trackedFrameMs = double.NegativeInfinity;
     private double _prevTrackedFrameMs = double.NaN;
     private double _medianFrameIntervalMs = double.NaN;
@@ -118,8 +116,6 @@ public sealed partial class MarkerIndex
         SessionMemory = _session.ToArray(),
         RecentlyEnded = _recentlyEnded.ToArray(),
         NewFrameMs = _newFrameMs,
-        NameConfirmedMs = _nameConfirmedMs,
-        SettingsChangedMs = _settingsChangedMs,
         TrackedFrameMs = _trackedFrameMs,
         PrevTrackedFrameMs = _prevTrackedFrameMs,
         MedianFrameIntervalMs = _medianFrameIntervalMs,
@@ -207,7 +203,6 @@ public sealed partial class MarkerIndex
                 _boundary = settings.Boundary;
                 _windowWidth = settings.WindowWidth;
                 _windowHeight = settings.WindowHeight;
-                _settingsChangedMs = Math.Max(_settingsChangedMs, settings.FrameMs);
                 return IndexTrigger.SettingsChanged;
             default:
                 return IndexTrigger.None;
@@ -309,7 +304,7 @@ public sealed partial class MarkerIndex
                 return;
             }
 
-        var record = MarkerRecord.Born(_nextId++, update.Line, update.FrameMs, update.Group) with { BornWithSpeedGroup = update.SpeedGroup };
+        var record = MarkerRecord.Born(_nextId++, update.Line, update.FrameMs, update.Group) with { BornWithSpeedGroup = update.SpeedGroup, DistanceMetres = update.DistanceMetres };
         TraceNew(update, record.Id, null);
         _records.Add(record);
         if (update.FirstRequest is { } spec)
@@ -457,7 +452,6 @@ public sealed partial class MarkerIndex
             Post0 = null,
             Post1 = null,
         };
-        _nameConfirmedMs = Math.Max(_nameConfirmedMs, update.FrameMs);
         if (Trace.Line(nowMs, "idx", "confirm") is { } t)
             Trace!.Write(t.Int("mid", update.Id).Str("name", update.Name).Num("fms", update.FrameMs).Box("line", record.Line).Text());
         EndDuplicates(_records[index], update);

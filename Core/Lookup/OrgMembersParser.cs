@@ -23,6 +23,10 @@ public static class OrgMembersParser
 
     private const string RedactedText = "REDACTED";
 
+    public const string RefusedPrefix = "members API reported failure";
+
+    public static bool IsRefusal(string? reason) => reason?.StartsWith(RefusedPrefix, StringComparison.Ordinal) == true;
+
     public static RsiResult<OrgMembersPage> ParseResponse(string json)
     {
         try
@@ -33,12 +37,14 @@ public static class OrgMembersParser
                 return RsiResult<OrgMembersPage>.Failed("members response is not a JSON object");
 
             int? success = root.TryGetProperty(SuccessField, out var successElement) ? ReadInt(successElement) : null;
+            if (success is null)
+                return RsiResult<OrgMembersPage>.Failed("members response has no readable success field");
             if (success != 1)
             {
                 var message = root.TryGetProperty(MessageField, out var msg) && msg.ValueKind == JsonValueKind.String
                     ? msg.GetString()
                     : null;
-                return RsiResult<OrgMembersPage>.Failed($"members API reported failure ({message ?? "no message"})");
+                return RsiResult<OrgMembersPage>.Failed($"{RefusedPrefix} ({message ?? "no message"})");
             }
 
             if (!root.TryGetProperty(DataField, out var data) || data.ValueKind != JsonValueKind.Object)

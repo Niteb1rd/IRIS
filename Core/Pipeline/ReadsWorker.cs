@@ -7,7 +7,7 @@ namespace Iris.Core.Pipeline;
 
 public sealed class ReadsWorker
 {
-    private sealed record PendingTick(long Tag, long Tick, int Candidates, int Budget);
+    private sealed record PendingTick(long Tag, long Tick);
 
     private sealed record KeptRead(OpenCvSharp.Mat Image, string Text, string? Name, OpenCvSharp.Rect Region, int WindowWidth, int WindowHeight);
 
@@ -24,6 +24,7 @@ public sealed class ReadsWorker
     private readonly IMonotonicClock _clock;
     private readonly Dictionary<int, PlateState> _states = new();
     private readonly Dictionary<int, List<KeptRead>> _kept = new();
+    private readonly HashSet<int> _earlyRead = new();
     private int _unknownCropsHanded;
     private readonly HashSet<string> _confirmedLogged = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<SessionMemoryEntry> _memory = Array.Empty<SessionMemoryEntry>();
@@ -69,6 +70,19 @@ public sealed class ReadsWorker
         return false;
     }
 
+    public bool WantsEarlyRead(IndexSnapshot snapshot)
+    {
+        SyncEpoch(snapshot);
+        if (_pending is not null)
+            return false;
+        _earlyRead.RemoveWhere(id => snapshot.Find(id) is null);
+        var wanted = false;
+        foreach (var marker in snapshot.Markers)
+            if (marker.Status == PlateStatus.Unconfirmed && !_states.ContainsKey(marker.Id) && _earlyRead.Add(marker.Id))
+                wanted = true;
+        return wanted;
+    }
+
     public void Prepare(IndexSnapshot snapshot, PipelineEnvironment env, double nowMs, SocialConfig config)
     {
         var workStartMs = _clock.NowMs;
@@ -107,19 +121,20 @@ public sealed class ReadsWorker
         var madeFrom = snapshot.NewFrameMs;
         var target = double.IsFinite(madeFrom) ? madeFrom + snapshot.NominalFrameIntervalMs : nowMs;
         var readExpiryMs = RegionPlanner.OneTimeExpiryMs(_settings.ReadRequestMs, snapshot.NominalFrameIntervalMs, _settings);
+        var predict = _settings.Adapt(snapshot.NominalFrameIntervalMs);
         foreach (var id in selected)
         {
             if (snapshot.Find(id) is not { } marker)
                 continue;
             if (_states.TryGetValue(id, out var known) && known.Status is PlateStatus.Confirmed or PlateStatus.Stopped)
                 continue;
-            if (RegionPlanner.Crop(marker, target, _settings.ReadMarginPx * scale, width, height, _settings) is not { } crop)
+            if (RegionPlanner.Crop(marker, target, _settings.ReadMarginPx * scale, width, height, predict) is not { } crop)
                 continue;
             var spec = new RequestSpec(PipelineGroup.Reads, RequestKind.ReadCrop, RegionPlanner.ToPixelRect(crop), _tick, madeFrom, nowMs, nowMs + readExpiryMs, true);
             updates.Add(new RequestUpdate(PipelineGroup.Reads, stamp, epoch, id, spec));
         }
 
-        _pending = updates.Any(u => u is RequestUpdate) ? new PendingTick(_tick, _tick, list.Count, selected.Count) : null;
+        _pending = updates.Any(u => u is RequestUpdate) ? new PendingTick(_tick, _tick) : null;
         if (Trace.Line(_clock.NowMs, "rd", "prep") is { } prep)
         {
             prep.Int("tick", _tick).Int("candidates", list.Count).Num("madeFrom", madeFrom).Array("asked");
@@ -152,24 +167,30 @@ public sealed class ReadsWorker
 
         var updates = new List<IndexUpdate>();
         var freshnessMs = IndexModel.FreshnessLimitMs(snapshot, _settings);
+        var predict = _settings.Adapt(snapshot.NominalFrameIntervalMs);
         var readStart = Stopwatch.GetTimestamp();
         var reads = 0;
-        foreach (var region in frame.Regions)
+        try
         {
-            if (region.Requester != PipelineGroup.Reads || region.Kind != RequestKind.ReadCrop || region.Tag != pending.Tag || !region.OneTime || region.Image.Empty())
-                continue;
-            if (snapshot.Find(region.MarkerId) is not { } marker)
-                continue;
-            var (px, py, _, _) = marker.Predict(frame.FrameMs, _settings);
-            var item = new ReadItem(marker.Id, new CropImage(region.Image, region.Region, false), new PixelRect(px, py, marker.Width, marker.Height), marker.Height);
-            ReadOne(frame, pending, item, marker, freshnessMs, updates);
-            reads++;
+            foreach (var region in frame.Regions)
+            {
+                if (region.Requester != PipelineGroup.Reads || region.Kind != RequestKind.ReadCrop || region.Tag != pending.Tag || !region.OneTime || region.Image.Empty())
+                    continue;
+                if (snapshot.Find(region.MarkerId) is not { } marker)
+                    continue;
+                var (px, py, _, _) = marker.Predict(frame.FrameMs, predict);
+                var item = new ReadItem(marker.Id, new CropImage(region.Image, region.Region, false), new PixelRect(px, py, marker.Width, marker.Height), marker.Height);
+                ReadOne(frame, pending, item, marker, freshnessMs, updates);
+                reads++;
+            }
         }
+        finally
+        {
+            if (reads > 0)
+                _stats?.AddReadTick(reads, _settings.MaxReadsPerTick, Elapsed(readStart));
 
-        if (reads > 0)
-            _stats?.AddReadTick(reads, _settings.MaxReadsPerTick, Elapsed(readStart));
-
-        UpdateTiming.Send(_sink, updates, _clock, workStartMs, snapshot.NewFrameMs);
+            UpdateTiming.Send(_sink, updates, _clock, workStartMs, snapshot.NewFrameMs);
+        }
     }
 
     private void ReadOne(
@@ -307,6 +328,7 @@ public sealed class ReadsWorker
         foreach (var id in _kept.Keys.ToList())
             FlushKept(id);
         _states.Clear();
+        _earlyRead.Clear();
         _duplicates.Clear();
         _judge.ForgetMemo();
         _pending = null;

@@ -106,6 +106,7 @@ public sealed partial class LiveDetectionService : IDisposable
         if (_started || _disposed)
             return;
         _started = true;
+        OpenCvThreads.Apply();
         _indexThread.Start();
         _trackingThread.Start();
         _stoppedThread.Start();
