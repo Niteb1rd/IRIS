@@ -21,9 +21,6 @@ public readonly record struct TrackingBoundary(double Left, double Top, double R
 
     public static double DropDistancePx(double windowHeight) => LiveSettings.BoundaryDropLines * LiveSettings.LineHeightAt1440 * windowHeight / 1440.0;
 
-    public bool ContainsCenterOf(PixelRect box, double windowWidth, double windowHeight) =>
-        DistanceOutside(box, windowWidth, windowHeight) <= 0.0;
-
     public double DistanceOutside(PixelRect box, double windowWidth, double windowHeight)
     {
         var x = box.X + box.Width / 2.0;

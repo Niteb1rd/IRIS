@@ -87,6 +87,8 @@ public sealed partial class AppServices
 
     public Task<HostedConfigResult> FetchHostedConfigAsync(string url) => _hostedClient.FetchAsync(url, _shutdown.Token);
 
+    public void NotifyListSaved() => ListApplied?.Invoke(this, EventArgs.Empty);
+
     public SaveResult SaveListChange(Func<SocialConfig, SocialConfig> change)
     {
         if (ListFileHasErrors)

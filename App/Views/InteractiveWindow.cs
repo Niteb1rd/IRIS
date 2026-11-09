@@ -43,6 +43,12 @@ public interface IInteractiveHost
     void RefreshDossier();
 
     string? NoteFor(string handle);
+
+    bool NotesUnreadable { get; }
+
+    PixelRect? ResourceOverlayBox { get; }
+
+    void MoveResourceOverlay(double screenX, double screenY, bool save);
 }
 
 public sealed record DossierView(string Handle, string? Moniker, string? CitizenRecord, MarkerIdentity Identity, IReadOnlyList<OrgMembership> Orgs, bool Loading, string NoteText);
@@ -86,6 +92,13 @@ public sealed partial class InteractiveWindow : Window
         SourceInitialized += OnSourceInitialized;
         PreviewKeyDown += OnPreviewKeyDown;
         Deactivated += (_, _) => RequestExit(returnToGame: false);
+        Closing += (_, _) =>
+        {
+            if (_closing)
+                return;
+            _closing = true;
+            FlushNotes();
+        };
         Closed += (_, _) => StopNotesTimer();
     }
 
@@ -142,6 +155,53 @@ public sealed partial class InteractiveWindow : Window
         _root.Height = _bounds.Height / Scale;
         BuildList();
         BuildSearch();
+        BuildResourceHandle();
+    }
+
+    private void BuildResourceHandle()
+    {
+        if (_host.ResourceOverlayBox is not { } box)
+            return;
+        var handle = new Border
+        {
+            Width = box.Width / Scale,
+            Height = box.Height / Scale,
+            Background = Frozen(new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF))),
+            BorderBrush = Frozen(new SolidColorBrush(Color.FromArgb(0xCC, 0xFF, 0xFF, 0xFF))),
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.SizeAll,
+            ToolTip = "Drag to move the CPU, memory and GPU readout",
+        };
+        Canvas.SetLeft(handle, (box.X - _bounds.X) / Scale);
+        Canvas.SetTop(handle, (box.Y - _bounds.Y) / Scale);
+        Point? grabbed = null;
+        void MoveHost(bool save) =>
+            _host.MoveResourceOverlay(Canvas.GetLeft(handle) * Scale + _bounds.X, Canvas.GetTop(handle) * Scale + _bounds.Y, save);
+        handle.MouseLeftButtonDown += (_, e) =>
+        {
+            grabbed = e.GetPosition(handle);
+            handle.CaptureMouse();
+            e.Handled = true;
+        };
+        handle.MouseMove += (_, e) =>
+        {
+            if (grabbed is not { } at)
+                return;
+            var mouse = e.GetPosition(_root);
+            Canvas.SetLeft(handle, Math.Clamp(mouse.X - at.X, 0.0, Math.Max(0.0, _root.Width - handle.Width)));
+            Canvas.SetTop(handle, Math.Clamp(mouse.Y - at.Y, 0.0, Math.Max(0.0, _root.Height - handle.Height)));
+            MoveHost(save: false);
+        };
+        handle.MouseLeftButtonUp += (_, e) =>
+        {
+            if (grabbed is null)
+                return;
+            grabbed = null;
+            handle.ReleaseMouseCapture();
+            MoveHost(save: true);
+            e.Handled = true;
+        };
+        _root.Children.Add(handle);
     }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)

@@ -21,6 +21,14 @@ public static class StampFont
         ['R'] = new byte[] { 0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11 },
         ['F'] = new byte[] { 0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10 },
         ['T'] = new byte[] { 0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04 },
+        ['C'] = new byte[] { 0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E },
+        ['P'] = new byte[] { 0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10 },
+        ['U'] = new byte[] { 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E },
+        ['M'] = new byte[] { 0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11 },
+        ['E'] = new byte[] { 0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F },
+        ['B'] = new byte[] { 0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E },
+        ['G'] = new byte[] { 0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F },
+        ['%'] = new byte[] { 0x18, 0x19, 0x02, 0x04, 0x08, 0x13, 0x03 },
         ['.'] = new byte[] { 0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C },
         [':'] = new byte[] { 0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00 },
         ['-'] = new byte[] { 0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00 },
@@ -28,6 +36,22 @@ public static class StampFont
 
     public static (int Width, int Height) Measure(string text, int scale) =>
         (((text.Length * (GlyphWidth + 1)) - 1 + 2 * Padding) * scale, (GlyphHeight + 2 * Padding) * scale);
+
+    public static bool CanDraw(string text) => text.All(c => c == ' ' || Glyphs.ContainsKey(c));
+
+    public static void DrawOutlined(byte[] pixels, int stride, int width, int height, string text, int scale)
+    {
+        var (w, h) = Measure(text, scale);
+        w = Math.Min(w, width);
+        h = Math.Min(h, height);
+        VisitInk(text, scale, w, h, (x, y) =>
+        {
+            for (var oy = Math.Max(0, y - 1); oy <= Math.Min(h - 1, y + 1); oy++)
+                for (var ox = Math.Max(0, x - 1); ox <= Math.Min(w - 1, x + 1); ox++)
+                    Set(pixels, oy * stride + ox * 4, 0, 255);
+        });
+        VisitInk(text, scale, w, h, (x, y) => Set(pixels, y * stride + x * 4, 255, 255));
+    }
 
     public static void Draw(byte[] pixels, int stride, int width, int height, string text, int scale)
     {
@@ -41,6 +65,11 @@ public static class StampFont
                 Set(pixels, row + x * 4, 0, 200);
         }
 
+        VisitInk(text, scale, w, h, (x, y) => Set(pixels, y * stride + x * 4, 255, 255));
+    }
+
+    private static void VisitInk(string text, int scale, int w, int h, Action<int, int> visit)
+    {
         for (var i = 0; i < text.Length; i++)
         {
             if (!Glyphs.TryGetValue(text[i], out var glyph))
@@ -61,7 +90,7 @@ public static class StampFont
                         {
                             var x = left + gx * scale + sx;
                             if (x < w)
-                                Set(pixels, y * stride + x * 4, 255, 255);
+                                visit(x, y);
                         }
                     }
                 }

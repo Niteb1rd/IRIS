@@ -46,6 +46,11 @@ public sealed partial class NameplateDetector : IDisposable
     private bool[] _solid = Array.Empty<bool>();
     private bool[] _tall = Array.Empty<bool>();
     private bool _disposed;
+    private NameplateDetector[]? _bands;
+    private bool _countContrastInk;
+    private int _inkKeepFrom;
+    private int _inkKeepRows;
+    private int? _lastContrastInk;
 
     public NameplateDetector(NameplateReader reader, NameplateDetectorSettings? settings = null)
     {
@@ -60,6 +65,8 @@ public sealed partial class NameplateDetector : IDisposable
     }
 
     public IContrastMaskSink? ContrastSink { get; set; }
+
+    public Iris.Core.Pipeline.LowPriorityWorkers? Workers { get; set; }
 
     public LayerCheck? Layers { get; set; }
 
@@ -339,6 +346,7 @@ public sealed partial class NameplateDetector : IDisposable
         if (_disposed)
             return;
         _disposed = true;
+        DisposeBands();
         foreach (var mat in new[] { _blue, _green, _red, _hat, _hatBits, _cyanWhite, _redMask, _greenMask, _scratch, _mask, _kept, _labelHit, _maskLabels, _joined, _labels, _stats, _centroids, _value, _bgSmall, _bgBlur, _background, _bright, _limit, _ink, _valueHat, _hatLimits })
             mat.Dispose();
         foreach (var kernel in _kernels.Values)

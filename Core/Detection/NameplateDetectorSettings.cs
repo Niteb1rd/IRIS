@@ -194,7 +194,11 @@ public sealed record NameplateDetectorSettings
 
     public const double MaxPieceCaps = 8.0;
 
-    public const int MaxSplitSpans = 1500;
+    public const int MaxSplitSpans = 500;
+
+    public const int BrightBackgroundValue = 170;
+
+    public const double BrightBackgroundShare = 0.5;
 
     public const double NameMinInk = 0.02;
 

@@ -28,6 +28,7 @@ public partial class App : Application
     private CacheUpdater? _updater;
     private HostedConfigAutoChecker? _hostedChecker;
     private UpdateNotifier? _updateNotifier;
+    private ConfigFileWatcher? _configWatcher;
     private OverlayController? _overlay;
     private InteractiveOverlay? _interactive;
     private LiveDetectionService? _live;
@@ -176,6 +177,10 @@ public partial class App : Application
             _tray?.ShowBalloon(RunningInTrayText);
         }
 
+        var watcher = new ConfigFileWatcher(services, () => !_shuttingDown && _configWindow is null && !imports.IsBusy, poll => _configWindow?.TakePoll(poll) ?? false);
+        _configWatcher = watcher;
+        watcher.Start();
+
         var checker = new HostedConfigAutoChecker(services, imports);
         _hostedChecker = checker;
         checker.Start();
@@ -197,6 +202,7 @@ public partial class App : Application
 
     private void ReleaseAll()
     {
+        _configWatcher?.Dispose();
         _hostedChecker?.Dispose();
         _hostedChecker = null;
         _updateNotifier?.Dispose();
@@ -312,6 +318,10 @@ public partial class App : Application
     private void ApplyUpdate(string newRoot, ReleaseVersion version)
     {
         if (_shuttingDown || _services is null)
+            return;
+
+        if (_configWindow is { } settings && settings.HasUnsavedChanges(ignoreHostedUrl: false)
+            && !PromptDialog.Ask("Settings has unsaved changes. Install the update now and lose them?\n\nChoose No to keep them. IRIS will offer the update again the next time it starts.", owner: null))
             return;
 
         var installFolder = AppContext.BaseDirectory;

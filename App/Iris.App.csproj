@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows10.0.22000.0</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.22000.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>IRIS</AssemblyName>
@@ -10,7 +10,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\iris-on.ico</ApplicationIcon>
-    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+    <NoWarn>$(NoWarn);WFAC010;WFO0003</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

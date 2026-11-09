@@ -6,6 +6,7 @@ public sealed class RsiCircuitBreaker
     private int _count;
     private bool _open;
     private DateTimeOffset _openUntil;
+    private DateTimeOffset _lastCounted = DateTimeOffset.MinValue;
 
     public bool IsOpen(DateTimeOffset now, out TimeSpan remaining, out bool justClosed)
     {
@@ -32,8 +33,9 @@ public sealed class RsiCircuitBreaker
     {
         lock (_gate)
         {
-            if (_open)
+            if (_open || (now - _lastCounted).Duration() < CacheSettings.RsiDefaultInterval)
                 return false;
+            _lastCounted = now;
             _count++;
             if (_count < CacheSettings.RsiBreakerThreshold)
                 return false;
@@ -47,8 +49,10 @@ public sealed class RsiCircuitBreaker
     {
         lock (_gate)
         {
-            if (!_open)
-                _count = 0;
+            if (_open)
+                return;
+            _count = 0;
+            _lastCounted = DateTimeOffset.MinValue;
         }
     }
 }

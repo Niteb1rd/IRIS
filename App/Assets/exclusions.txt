@@ -38,7 +38,7 @@ Marok
 Stormwal
 # Mineral
 Quantainium
-Bexlite
+Bexalite
 Laranite
 Taranite
 Agricium

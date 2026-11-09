@@ -42,10 +42,12 @@ public sealed partial class ScanWorker : IDisposable
     private int _keepAlivesLogged;
     private readonly Dictionary<int, int> _fails = new();
     private readonly Dictionary<int, int> _lost = new();
+    private readonly Dictionary<int, double> _holdSinceMs = new();
     private readonly HashSet<int> _seenConfirmed = new();
     private PendingTick? _pending;
     private double _scale = 1.0;
     private long _tick;
+    private double _checkCredit;
     private int _epoch = int.MinValue;
     private long _frameSeq;
     private PipelineSettings _predict;
@@ -54,6 +56,7 @@ public sealed partial class ScanWorker : IDisposable
     private double _templateDistLh = double.NaN;
     private double _templateReachLh = double.NaN;
     private bool _templateMoved;
+    private bool _heldInPlace;
     private int _checkTries, _failOwnName, _failOtherPlate, _failOther;
     private long _checkReadTicks, _checkTemplateTicks;
     private double _checkMaskMs;
@@ -125,19 +128,32 @@ public sealed partial class ScanWorker : IDisposable
         var area = new PixelRect(env.Geometry.Capture.X, env.Geometry.Capture.Y, env.Geometry.Capture.Width, env.Geometry.Capture.Height);
         updates.Add(new RequestUpdate(
             PipelineGroup.Scan, madeFrom, epoch, 0, new RequestSpec(PipelineGroup.Scan, RequestKind.ScanArea, area, _tick, madeFrom, nowMs, expires, true)));
-        foreach (var marker in snapshot.Markers)
+        if (ChecksDueThisTick())
         {
-            if ((RegionPlanner.Crop(CropMarker(marker, stamp, freshMs, target), target, marker.Height * _settings.CheckMarginLines, width, height, _settings)
-                 ?? RegionPlanner.Crop(AtLastLine(marker, target), target, marker.Height * _settings.CheckMarginLines, width, height, _settings)) is not { } crop)
-                continue;
-            updates.Add(new RequestUpdate(
-                PipelineGroup.Scan, madeFrom, epoch, marker.Id,
-                new RequestSpec(PipelineGroup.Scan, RequestKind.CheckCrop, RegionPlanner.ToPixelRect(crop), _tick, madeFrom, nowMs, expires, true)));
+            foreach (var marker in snapshot.Markers)
+            {
+                if ((RegionPlanner.Crop(CropMarker(marker, stamp, freshMs, target), target, marker.Height * _settings.CheckMarginLines, width, height, _predict)
+                     ?? RegionPlanner.Crop(AtLastLine(marker, target), target, marker.Height * _settings.CheckMarginLines, width, height, _predict)) is not { } crop)
+                    continue;
+                updates.Add(new RequestUpdate(
+                    PipelineGroup.Scan, madeFrom, epoch, marker.Id,
+                    new RequestSpec(PipelineGroup.Scan, RequestKind.CheckCrop, RegionPlanner.ToPixelRect(crop), _tick, madeFrom, nowMs, expires, true)));
+            }
+
+            RequestMiningSearch(snapshot, env, madeFrom, nowMs, expires, updates);
         }
 
-        RequestMiningSearch(snapshot, env, madeFrom, nowMs, expires, updates);
         _pending = new PendingTick(_tick);
         UpdateTiming.Send(_sink, updates, _clock, workStartMs, snapshot.NewFrameMs);
+    }
+
+    private bool ChecksDueThisTick()
+    {
+        _checkCredit += Math.Min(1.0, _settings.PlateCheckHz / _settings.ScanHz);
+        if (_checkCredit < 1.0 - 1e-9)
+            return false;
+        _checkCredit -= 1.0;
+        return true;
     }
 
     private static MarkerRecord AtLastLine(MarkerRecord marker, double targetMs) =>
@@ -203,9 +219,6 @@ public sealed partial class ScanWorker : IDisposable
                 mining = region;
         }
 
-        if (mining is not null)
-            SearchMining(snapshot, mining, frame, updates);
-
         if (scan is not null && !frame.WaitForScan(_settings.ScanReadWaitMs))
         {
             _stats?.AddScanUnavailable();
@@ -227,11 +240,13 @@ public sealed partial class ScanWorker : IDisposable
                 .Num("maskMs", parts?.MaskMs ?? double.NaN, 1).Num("linesMs", parts?.LinesMs ?? double.NaN, 1).Num("readsMs", parts?.DistanceReadsMs ?? double.NaN, 1)
                 .Int("found", lines.Count).Array("new");
             var speedGroups = Ops.LastScanSpeedGroups;
+            var distances = Ops.LastScanDistances;
             foreach (var line in lines)
             {
                 if (IsTrackedLine(line, snapshot, frameMs))
                     continue;
-                updates.Add(new NewMarkerUpdate(PipelineGroup.Scan, frameMs, epoch, line, FirstRequest(line, frameMs, snapshot, env, nowMs), speedGroups.Contains(line)));
+                updates.Add(new NewMarkerUpdate(PipelineGroup.Scan, frameMs, epoch, line, FirstRequest(line, frameMs, snapshot, env, nowMs), speedGroups.Contains(line),
+                    distances.TryGetValue(line, out var metres) ? metres : double.NaN));
                 traced?.Item().Box("b", line);
             }
 
@@ -242,6 +257,15 @@ public sealed partial class ScanWorker : IDisposable
         {
             Trace!.Write(none.Int("seq", frame.Sequence).Num("fms", frameMs).Int("tick", pending.Tag).Bool("noScanArea", true).Text());
         }
+
+        if (updates.Count > 0)
+        {
+            UpdateTiming.Send(_sink, updates, _clock, workStartMs, snapshot.NewFrameMs);
+            updates = new List<IndexUpdate>();
+        }
+
+        if (mining is not null)
+            SearchMining(snapshot, mining, frame, updates);
 
         var claimed = new List<PixelRect>();
         var checksStarted = Stopwatch.GetTimestamp();
@@ -328,6 +352,7 @@ public sealed partial class ScanWorker : IDisposable
         _pending = null;
         _fails.Clear();
         _lost.Clear();
+        _holdSinceMs.Clear();
         _seenConfirmed.Clear();
         DropAllKeeps();
     }
@@ -339,6 +364,8 @@ public sealed partial class ScanWorker : IDisposable
             _fails.Remove(id);
         foreach (var id in _lost.Keys.Where(id => !alive.Contains(id)).ToList())
             _lost.Remove(id);
+        foreach (var id in _holdSinceMs.Keys.Where(id => !alive.Contains(id)).ToList())
+            _holdSinceMs.Remove(id);
         _seenConfirmed.RemoveWhere(id => !alive.Contains(id));
         foreach (var id in _keep.Keys.Where(id => !alive.Contains(id)).ToList())
             DropKeep(id);

@@ -76,6 +76,10 @@ public sealed record LiveSettings
 
     public const int CaptureGpuPriority = 0;
 
+    public const int OpenCvThreads = 2;
+
+    public const int ScanHelpers = 1;
+
     public const double DuplicationGameUpdateShare = 0.5;
 
     public const double DuplicationFallbackMs = 250.0;

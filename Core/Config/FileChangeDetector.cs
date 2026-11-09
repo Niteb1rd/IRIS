@@ -81,6 +81,7 @@ public sealed class FileChangeDetector
         DateTime time;
         long length;
         long generation;
+        bool returned;
         lock (_gate)
         {
             if (!TryStat(out var exists, out time, out length))
@@ -94,14 +95,19 @@ public sealed class FileChangeDetector
                 return FileChange.Gone;
             }
 
+            returned = _missingReported;
             _missingReported = false;
-            if (_writeTime == time && _length == length)
+            if (!returned && _writeTime == time && _length == length)
                 return FileChange.NoChange;
 
             generation = _generation;
         }
 
-        return ReadAndRemember(time, length, generation, forced: false);
+        var change = ReadAndRemember(time, length, generation, forced: returned);
+        if (returned && ReferenceEquals(change, FileChange.InUse))
+            lock (_gate)
+                _missingReported = true;
+        return change;
     }
 
     public FileChange Load()

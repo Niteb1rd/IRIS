@@ -88,6 +88,14 @@ public sealed record AppSettings
 
     public bool CheckForUpdates { get; init; }
 
+    public bool ShowResourceOverlay { get; init; }
+
+    public int ResourceOverlayRightPx { get; init; }
+
+    public int ResourceOverlayTopPx { get; init; }
+
+    public const int ResourceOverlayOffsetMax = 20000;
+
     public bool HideCaptureBorder { get; init; }
 
     public bool MiningDisabled { get; init; }

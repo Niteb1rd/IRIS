@@ -30,7 +30,6 @@ public sealed partial class WgcFrameSource : IFrameSource
         public Vd.ID3D11Texture2D? Staging;
         public int StagingWidth;
         public int StagingHeight;
-        public Mat? Bgr;
     }
 
     [DllImport("d3d11.dll", EntryPoint = "CreateDirect3D11DeviceFromDXGIDevice")]
@@ -312,12 +311,6 @@ public sealed partial class WgcFrameSource : IFrameSource
         if (_disposed)
             return;
         Release();
-        foreach (var slot in AllSlots())
-        {
-            slot.Bgr?.Dispose();
-            slot.Bgr = null;
-        }
-
         _slots.Clear();
         _disposed = true;
         _arrived.Dispose();

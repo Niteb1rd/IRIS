@@ -21,6 +21,12 @@ public sealed class SessionNames
             return _notFound.Add(name);
     }
 
+    public bool IsVerified(string name)
+    {
+        lock (_gate)
+            return _verified.Contains(name);
+    }
+
     public void AddVerified(string name)
     {
         lock (_gate)
@@ -30,6 +36,12 @@ public sealed class SessionNames
             var fold = LookAlikes.FoldO0(name);
             _byFold[fold] = _byFold.TryGetValue(fold, out var other) && other != name ? null : name;
         }
+    }
+
+    public bool IsOnlySpelling(string name)
+    {
+        lock (_gate)
+            return _verified.Contains(name) && _byFold.TryGetValue(LookAlikes.FoldO0(name), out var spelling) && spelling == name;
     }
 
     public string SpellingOf(string name)

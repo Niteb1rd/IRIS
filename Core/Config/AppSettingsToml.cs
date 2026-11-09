@@ -33,6 +33,7 @@ public static class AppSettingsToml
         "panel_width_percent", "panel_text_size", "panel_right_gap_percent", "panel_top_gap_percent",
         "boundary_top", "boundary_bottom", "boundary_left", "boundary_right",
         "nameplate_tracking_fps", "tracking_loss_display_seconds", "capture_method", "overlay_visible_in_capture", "hide_capture_border", "check_for_updates",
+        "show_resource_overlay", "resource_overlay_right_px", "resource_overlay_top_px",
         "settings_window_scale", "settings_dark_mode", "overlay_disabled", "hotkey_toggle_overlay",
         "hotkey_timed_overlay", "timed_overlay_seconds", "mining_disabled", "mining_label_zoom_percent", "panel_org_display", "panel_main_org_only", "import_mode",
         "hotkey_interactive_overlay", "dossier_width_percent",
@@ -73,6 +74,9 @@ public static class AppSettingsToml
         sb.AppendLine($"overlay_visible_in_capture = {Bool(settings.OverlayVisibleInCapture)}");
         sb.AppendLine($"hide_capture_border = {Bool(settings.HideCaptureBorder)}");
         sb.AppendLine($"check_for_updates = {Bool(settings.CheckForUpdates)}");
+        sb.AppendLine($"show_resource_overlay = {Bool(settings.ShowResourceOverlay)}");
+        sb.AppendLine("resource_overlay_right_px = " + settings.ResourceOverlayRightPx.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        sb.AppendLine("resource_overlay_top_px = " + settings.ResourceOverlayTopPx.ToString(System.Globalization.CultureInfo.InvariantCulture));
         sb.AppendLine($"settings_window_scale = {WriteWindowScale(settings.SettingsWindowScale)}");
         sb.AppendLine($"settings_dark_mode = {SocialConfigToml.Quote(DarkModeText(settings.SettingsDarkMode))}");
         sb.AppendLine($"overlay_disabled = {Bool(settings.OverlayDisabled)}");
@@ -125,6 +129,8 @@ public static class AppSettingsToml
 
     public static IReadOnlyList<string> MissingKeys(string text)
     {
+        if (TomlDepth.TooDeep(text))
+            return Array.Empty<string>();
         var doc = Toml.Parse(text);
         if (doc.HasErrors)
             return Array.Empty<string>();
@@ -134,6 +140,13 @@ public static class AppSettingsToml
 
     internal static AppSettingsLoadResult ReadWith(string text, AppSettings defaults)
     {
+        if (TomlDepth.TooDeep(text))
+        {
+            var deep = new AppSettingsLoadResult(defaults, isNew: false);
+            deep.Errors.Add(TomlDepth.Error);
+            return deep;
+        }
+
         var doc = Toml.Parse(text);
         if (doc.HasErrors)
         {
@@ -280,6 +293,9 @@ public static class AppSettingsToml
         var visibleInCapture = ReadBool(root, "overlay_visible_in_capture", defaults.OverlayVisibleInCapture, warnings);
         var hideBorder = ReadBool(root, "hide_capture_border", defaults.HideCaptureBorder, warnings);
         var checkForUpdates = ReadBool(root, "check_for_updates", defaults.CheckForUpdates, warnings);
+        var showResources = ReadBool(root, "show_resource_overlay", defaults.ShowResourceOverlay, warnings);
+        var resourcesRight = ReadInt(root, "resource_overlay_right_px", defaults.ResourceOverlayRightPx, Overlay.ResourceOverlayPlacement.Unset, AppSettings.ResourceOverlayOffsetMax, warnings);
+        var resourcesTop = ReadInt(root, "resource_overlay_top_px", defaults.ResourceOverlayTopPx, Overlay.ResourceOverlayPlacement.Unset, AppSettings.ResourceOverlayOffsetMax, warnings);
         var windowScale = ReadWindowScale(root, defaults.SettingsWindowScale, warnings);
         var darkMode = ReadDarkMode(root, defaults.SettingsDarkMode, warnings);
         var overlayDisabled = ReadBool(root, "overlay_disabled", defaults.OverlayDisabled, warnings);
@@ -321,6 +337,9 @@ public static class AppSettingsToml
             OverlayVisibleInCapture = visibleInCapture,
             HideCaptureBorder = hideBorder,
             CheckForUpdates = checkForUpdates,
+            ShowResourceOverlay = showResources,
+            ResourceOverlayRightPx = resourcesRight,
+            ResourceOverlayTopPx = resourcesTop,
             SettingsWindowScale = windowScale,
             SettingsDarkMode = darkMode,
             CacheTtlDays = ttl,
@@ -545,26 +564,6 @@ public static class AppSettingsToml
         }
         warnings.Add($"{key}: {problem} {char.ToUpperInvariant(fallbackText[0])}{fallbackText[1..]}.");
         return fallback;
-    }
-
-    public static AppSettingsLoadResult Load(string path)
-    {
-        if (!File.Exists(path))
-            return new AppSettingsLoadResult(AppSettings.Defaults, isNew: true);
-
-        string text;
-        try
-        {
-            text = File.ReadAllText(path, Encoding.UTF8);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            var unreadable = new AppSettingsLoadResult(AppSettings.Defaults, isNew: false);
-            unreadable.Errors.Add("The file could not be read: " + ex.Message);
-            return unreadable;
-        }
-
-        return Read(text);
     }
 
     public static SaveResult Save(string path, AppSettings settings, WatchedFile? watched = null)

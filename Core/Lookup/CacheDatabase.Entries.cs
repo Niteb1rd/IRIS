@@ -144,19 +144,6 @@ public sealed partial class CacheDatabase
             LastRefreshed: ParseTime(reader.GetString(10)));
     }
 
-    public IReadOnlyList<string> GetOrgMembers(string sid)
-    {
-        lock (_gate)
-        {
-            var handles = new List<string>();
-            using var command = Command("SELECT handle FROM org_members WHERE sid = $sid ORDER BY handle", ("$sid", sid));
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-                handles.Add(reader.GetString(0));
-            return handles;
-        }
-    }
-
     public bool IsOrgMember(string sid, string handle)
     {
         lock (_gate)

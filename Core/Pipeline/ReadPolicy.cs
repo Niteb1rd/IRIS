@@ -14,6 +14,8 @@ public interface IReadJudge
     NameClass Classify(string name);
 
     bool IsListed(string name);
+
+    bool IsKnownPlayer(string name);
 }
 
 public enum PolicyEvent
@@ -72,7 +74,7 @@ public sealed class ReadPolicy
                 name = resolved.Name;
                 decided = resolved.Decided;
                 var verified = _names.SpellingOf(name);
-                if (verified != name)
+                if (verified != name || _names.IsOnlySpelling(name))
                 {
                     name = verified;
                     decided = true;
@@ -123,8 +125,7 @@ public sealed class ReadPolicy
         }
 
         var recent = plate.Recent;
-        var n = _settings.ConfirmReads;
-        if (kind == ReadKind.Name && recent.Count >= n && IsConfirmable(recent, n, observation.LineHeight))
+        if (kind == ReadKind.Name && HasAgreement(recent, name!, observation.LineHeight))
         {
             if (!decided)
                 return new PolicyResult(PolicyEvent.None, kind, name, duplicateOf);
@@ -189,8 +190,15 @@ public sealed class ReadPolicy
         return ambiguous ? null : spelling;
     }
 
-    private bool IsConfirmable(IReadOnlyList<ReadRecord> recent, int n, double lineHeight)
+    private bool HasAgreement(IReadOnlyList<ReadRecord> recent, string name, double lineHeight) =>
+        IsConfirmable(recent, _settings.ConfirmReads, _settings.ConfirmSpanMs, lineHeight)
+        || (IsConfirmable(recent, _settings.KnownConfirmReads, _settings.KnownConfirmSpanMs, lineHeight)
+            && (_names.IsVerified(name) || _judge.IsKnownPlayer(name)));
+
+    private bool IsConfirmable(IReadOnlyList<ReadRecord> recent, int n, double spanMs, double lineHeight)
     {
+        if (recent.Count < n)
+            return false;
         var first = recent[recent.Count - n];
         var frames = new HashSet<long>();
         double minWidth = double.MaxValue, maxWidth = double.MinValue;
@@ -204,7 +212,7 @@ public sealed class ReadPolicy
             maxWidth = Math.Max(maxWidth, r.NameWidth);
         }
 
-        if (frames.Count != n || recent[^1].Ms - first.Ms < _settings.ConfirmSpanMs - 1e-6)
+        if (frames.Count != n || recent[^1].Ms - first.Ms < spanMs - 1e-6)
             return false;
         return maxWidth - minWidth <= Math.Max(_settings.StableWidthMinPx, _settings.StableWidthLines * lineHeight);
     }

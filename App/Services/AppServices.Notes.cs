@@ -10,6 +10,7 @@ namespace Iris.App.Services;
 public sealed partial class AppServices
 {
     private readonly SemaphoreSlim _notesSave = new(1, 1);
+    private long _notesSaveRequests;
     private readonly object _notesLoad = new();
     private DossierNotes? _notes;
     private volatile bool _notesUnreadable;
@@ -48,12 +49,14 @@ public sealed partial class AppServices
             return Task.CompletedTask;
         var text = Notes.Serialize();
         var path = Paths.DossierNotesFile;
+        var request = Interlocked.Increment(ref _notesSaveRequests);
         return Task.Run(async () =>
         {
             await _notesSave.WaitAsync().ConfigureAwait(false);
             try
             {
-                DossierNotes.Save(path, text);
+                if (request == Interlocked.Read(ref _notesSaveRequests))
+                    DossierNotes.Save(path, text);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

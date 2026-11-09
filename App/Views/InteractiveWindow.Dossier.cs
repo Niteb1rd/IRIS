@@ -34,6 +34,7 @@ public sealed partial class InteractiveWindow
     private DossierView? _view;
     private TextBox? _notesBox;
     private bool _notesDirty;
+    private bool _notesUnsaved;
     private Border? _searchHost;
     private Popup? _searchPopup;
 
@@ -55,7 +56,9 @@ public sealed partial class InteractiveWindow
         bool samePlayer = _view is not null && string.Equals(_view.Handle, view.Handle, StringComparison.OrdinalIgnoreCase);
         if (!samePlayer)
             FlushNotes();
-        var keptText = samePlayer && _notesBox is not null ? _notesBox.Text : view.NoteText;
+        if (!samePlayer)
+            _notesUnsaved = false;
+        var keptText = samePlayer && _notesBox is not null && (_notesDirty || _notesUnsaved) ? _notesBox.Text : view.NoteText;
         var keptCaret = samePlayer && _notesBox is not null ? _notesBox.CaretIndex : keptText.Length;
         var hadFocus = samePlayer && _notesBox is { IsKeyboardFocused: true };
         var wasDirty = samePlayer && _notesDirty;
@@ -130,7 +133,9 @@ public sealed partial class InteractiveWindow
         if (!_notesDirty || _view is null || _notesBox is null)
             return;
         _notesDirty = false;
-        if (!_host.SaveNote(_view.Handle, _view.CitizenRecord, _notesBox.Text))
+        var saved = _host.SaveNote(_view.Handle, _view.CitizenRecord, _notesBox.Text);
+        _notesUnsaved = !saved || _host.NotesUnreadable;
+        if (!saved)
             ShowMessage(NotesFullText);
         RefreshRow(_view.Handle);
     }

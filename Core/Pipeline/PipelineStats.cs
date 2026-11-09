@@ -56,6 +56,7 @@ public sealed class PipelineStats : IContrastMaskSink
     private int _endConfirmedNoTracking;
     private int _endUnconfirmed;
     private int _templateKeepAlives;
+    private int _inPlaceHolds;
     private int _templateRejects;
     private int _templateGuardRejects;
     private int _templateMoves;
@@ -96,60 +97,6 @@ public sealed class PipelineStats : IContrastMaskSink
 
     public PipelineStats(double startMs) => _windowStartMs = startMs;
 
-    public int Scans
-    {
-        get
-        {
-            lock (_gate)
-                return _scanMs.Count;
-        }
-    }
-
-    public int Reads
-    {
-        get
-        {
-            lock (_gate)
-                return _reads;
-        }
-    }
-
-    public int B3Ends
-    {
-        get
-        {
-            lock (_gate)
-                return _endConfirmedReads + _endConfirmedNoTracking + _endUnconfirmed;
-        }
-    }
-
-    public int EndedConfirmedReads
-    {
-        get
-        {
-            lock (_gate)
-                return _endConfirmedReads;
-        }
-    }
-
-    public int EndedConfirmedNoTracking
-    {
-        get
-        {
-            lock (_gate)
-                return _endConfirmedNoTracking;
-        }
-    }
-
-    public int EndedUnconfirmed
-    {
-        get
-        {
-            lock (_gate)
-                return _endUnconfirmed;
-        }
-    }
-
     public int TemplateKeepAlives
     {
         get
@@ -159,70 +106,13 @@ public sealed class PipelineStats : IContrastMaskSink
         }
     }
 
-    public int LostPlatesRefused
+    public int InPlaceHolds
     {
         get
         {
             lock (_gate)
-                return _lostRefused;
+                return _inPlaceHolds;
         }
-    }
-
-    public int TemplateRejects
-    {
-        get
-        {
-            lock (_gate)
-                return _templateRejects;
-        }
-    }
-
-    public int TemplateMoves
-    {
-        get
-        {
-            lock (_gate)
-                return _templateMoves;
-        }
-    }
-
-    public int TemplateGuardRejects
-    {
-        get
-        {
-            lock (_gate)
-                return _templateGuardRejects;
-        }
-    }
-
-    public int Restored
-    {
-        get
-        {
-            lock (_gate)
-                return _restored;
-        }
-    }
-
-    public int Confirmed
-    {
-        get
-        {
-            lock (_gate)
-                return _confirmed;
-        }
-    }
-
-    public int Skipped(PipelineGroup group)
-    {
-        lock (_gate)
-            return _skipped[(int)group];
-    }
-
-    public double BusyMs(PipelineGroup group)
-    {
-        lock (_gate)
-            return _busyMs[(int)group];
     }
 
     public static double CpuShare(double busyMs, double windowMs) => windowMs > 0.0 ? 100.0 * busyMs / windowMs : 0.0;
@@ -461,6 +351,12 @@ public sealed class PipelineStats : IContrastMaskSink
             _templateKeepAlives++;
     }
 
+    public void AddInPlaceHold()
+    {
+        lock (_gate)
+            _inPlaceHolds++;
+    }
+
     public void AddTemplateReject()
     {
         lock (_gate)
@@ -626,7 +522,7 @@ public sealed class PipelineStats : IContrastMaskSink
                 string.Create(inv, $"{_reads} plate reads in {_readTicks} of {_plateTicks} plate ticks (budget use {use:0.0} of {budget} per tick, {_saturated} ticks at the budget, average {Average(_readMs):0.0} ms, p95 {LiveStats.Percentile95(_readMs):0.0} ms, longest read tick {Max(_readMs):0.0} ms), "),
                 string.Create(inv, $"ticks skipped (worker busy): reads {_skipped[(int)PipelineGroup.Reads]}, scan {_skipped[(int)PipelineGroup.Scan]}; {_unavailable} without a picture; "),
                 string.Create(inv, $"markers tracked {markerAverage:0.0} on average, at most {_markerMax}, {markersNow} now; ended by the marker check: {_endConfirmedReads} confirmed plates by failed distance reads, {_endConfirmedNoTracking} confirmed plates by no tracking hits, {_endUnconfirmed} unconfirmed markers by checks; {_boundaryEnds} left the boundary, {_confirmed} confirmed ({confirmedNow} now), {_restored} restored, {_stopped} stopped; "),
-                string.Create(inv, $"template keep-alives {_templateKeepAlives}, template rejects (below threshold) {_templateRejects}, template guard rejects (other plate) {_templateGuardRejects}, lost plates refused (name did not match) {_lostRefused}, lost-plate searches skipped {_lostSearchesSkipped}; lost plates moved to the template's place {_templateMoves}; "),
+                string.Create(inv, $"distance read in place held a plate {_inPlaceHolds}, template keep-alives {_templateKeepAlives}, template rejects (below threshold) {_templateRejects}, template guard rejects (other plate) {_templateGuardRejects}, lost plates refused (name did not match) {_lostRefused}, lost-plate searches skipped {_lostSearchesSkipped}; lost plates moved to the template's place {_templateMoves}; "),
                 string.Create(inv, $"tracking: {_trackMs.Count} ticks, average {Average(_trackMs):0.000} ms, p95 {LiveStats.Percentile95(_trackMs):0.000} ms, {share:0.0} % of {_attempts} distance lines found; tracking parts (average / p95): line search {Average(_trackFindMs):0.000} / {LiveStats.Percentile95(_trackFindMs):0.000} ms, assignment {Average(_trackAssignMs):0.000} / {LiveStats.Percentile95(_trackAssignMs):0.000} ms, rest {Average(_trackRestMs):0.000} / {LiveStats.Percentile95(_trackRestMs):0.000} ms; "),
                 string.Create(inv, $"confirmed plates: distance line found {confirmedShare:0.0} % of {_confirmedAttempts} tracking attempts; "),
                 string.Create(inv, $"assignment: {_contested} contested frames, {_overrides} assignment overrides, "),
@@ -670,7 +566,7 @@ public sealed class PipelineStats : IContrastMaskSink
             Array.Clear(_skipped);
             Array.Clear(_busyMs);
             _endConfirmedReads = _endConfirmedNoTracking = _endUnconfirmed = _restored = 0;
-            _templateKeepAlives = _templateRejects = _templateGuardRejects = _templateMoves = 0;
+            _inPlaceHolds = _templateKeepAlives = _templateRejects = _templateGuardRejects = _templateMoves = 0;
             _boundaryEnds = _confirmed = _stopped = 0;
             _markerSum = 0;
             _markerSamples = 0;

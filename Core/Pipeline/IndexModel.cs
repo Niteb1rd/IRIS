@@ -12,8 +12,6 @@ public static class IndexModel
         return Math.Min(raw, settings.FreshnessMaxMs);
     }
 
-    public static bool IsFresh(MarkerRecord marker, double nowMs, double limitMs) => nowMs - marker.LastFoundMs <= limitMs;
-
     public static bool IsDrawable(MarkerRecord marker, double nowMs, PipelineSettings settings) =>
         marker.HasTrackingFix && marker.MissedFrames <= settings.RenderMissFrames && nowMs - marker.LastFoundMs <= settings.FreshnessMaxMs;
 
@@ -99,7 +97,8 @@ public static class IndexModel
             items.Add(new BracketItem(box, identity.Kind, identity.Color, marker.Id));
         }
 
-        foreach (var ended in snapshot.RecentlyEnded)
+        listed.Sort((a, b) => a.Id.CompareTo(b.Id));
+        foreach (var ended in snapshot.RecentlyEnded.OrderByDescending(m => m.Id))
         {
             if (nowMs - ended.LastFoundMs <= keepMs)
                 listed.Add(ended);
@@ -131,14 +130,9 @@ public static class IndexModel
     public static IReadOnlyList<PanelEntry> Panel(IReadOnlyList<MarkerRecord> listed)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var entries = new List<PanelEntry>();
-        foreach (var marker in listed.OrderBy(m => m.Id))
-        {
-            var identity = marker.Identity!;
-            if (seen.Add(identity.Handle))
-                entries.Add(new PanelEntry(identity.Handle, identity.Kind, identity.Color, identity.Orgs));
-        }
-
-        return entries.OrderBy(e => (int)e.Kind).ToList();
+        return listed.Where(marker => seen.Add(marker.Identity!.Handle))
+            .OrderBy(marker => (int)marker.Identity!.Kind).ThenBy(marker => marker.Id)
+            .Select(marker => new PanelEntry(marker.Identity!.Handle, marker.Identity.Kind, marker.Identity.Color, marker.Identity.Orgs))
+            .ToList();
     }
 }

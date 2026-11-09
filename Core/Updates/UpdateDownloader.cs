@@ -14,12 +14,14 @@ public sealed record UpdateDownloadResult(bool Success, string? Error)
 
 public sealed class UpdateDownloader
 {
+    private readonly TimeSpan _stallTimeout;
     private readonly HttpClient _http;
     private readonly ILog _log;
     private readonly IClock _clock;
 
-    public UpdateDownloader(HttpClient http, IClock clock, ILog? log = null)
+    public UpdateDownloader(HttpClient http, IClock clock, ILog? log = null, TimeSpan? stallTimeout = null)
     {
+        _stallTimeout = stallTimeout ?? CacheSettings.UpdateDownloadStallTimeout;
         _http = http;
         _clock = clock;
         _log = log ?? NullLog.Instance;
@@ -86,8 +88,11 @@ public sealed class UpdateDownloader
                     await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
                     var chunk = new byte[81920];
                     int read;
-                    while ((read = await stream.ReadAsync(chunk.AsMemory(), ct).ConfigureAwait(false)) > 0)
+                    using var stall = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    stall.CancelAfter(_stallTimeout);
+                    while ((read = await stream.ReadAsync(chunk.AsMemory(), stall.Token).ConfigureAwait(false)) > 0)
                     {
+                        stall.CancelAfter(_stallTimeout);
                         length += read;
                         if (length > CacheSettings.UpdateDownloadMaxBytes)
                             break;
@@ -115,7 +120,7 @@ public sealed class UpdateDownloader
         }
         catch (OperationCanceledException)
         {
-            return FailAndDelete(partPath, $"no answer within {CacheSettings.UpdateDownloadTimeout.TotalMinutes:0} minutes", stopwatch.Elapsed);
+            return FailAndDelete(partPath, "the download server stopped answering", stopwatch.Elapsed);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException)
         {

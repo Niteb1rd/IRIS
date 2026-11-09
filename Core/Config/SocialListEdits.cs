@@ -110,8 +110,7 @@ public static class SocialListEdits
 
     internal static IReadOnlyList<OverlayColor> MoveTo(IReadOnlyList<OverlayColor> ranking, OverlayColor color, int rank)
     {
-        var current = ColorRanks.RankOf(ranking, color);
-        return ColorRanks.Move(ranking, color, rank > current + 1 && rank < ranking.Count ? rank - 1 : rank);
+        return ColorRanks.Move(ranking, color, rank);
     }
 
     private static SocialConfig KeepRankings(SocialConfig before, SocialConfig edited) =>

@@ -33,6 +33,8 @@ public sealed class RateClock
 
     public void Reset() => _nextMs = double.NegativeInfinity;
 
+    public void TickNow(double nowMs) => _nextMs = nowMs + _periodMs;
+
     public bool TryTick(double nowMs, out int missed)
     {
         missed = 0;

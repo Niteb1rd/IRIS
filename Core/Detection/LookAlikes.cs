@@ -2,8 +2,6 @@ namespace Iris.Core.Detection;
 
 public static class LookAlikes
 {
-    public static IReadOnlyList<string> AccuracyGroups { get; } = Array.Empty<string>();
-
     public static IReadOnlyList<string> EfficiencyGroups { get; } = new[] { "0OQD", "1I7", "5S", "8B", "6G", "2Z" };
 
     public const string EfficiencyLetters = "OQDISBGZ";

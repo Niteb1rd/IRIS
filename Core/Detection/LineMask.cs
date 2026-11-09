@@ -26,14 +26,4 @@ public sealed class LineMask
     public int RowOffset { get; init; }
 
     public byte[]? InkColors { get; init; }
-
-    public byte this[int y, int x] => Data[y * Width + x];
-
-    public static LineMask FromPackedBits(int height, int width, byte[] bits)
-    {
-        var data = new byte[checked(height * width)];
-        for (var i = 0; i < data.Length; i++)
-            data[i] = (byte)((bits[i >> 3] >> (7 - (i & 7))) & 1);
-        return new LineMask(height, width, data);
-    }
 }

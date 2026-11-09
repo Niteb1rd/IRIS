@@ -74,6 +74,9 @@ public sealed class CacheRefresher
     private readonly HashSet<string> _staleRefreshed = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _staleLock = new();
 
+    private readonly Dictionary<string, Task<CachedOrg?>> _orgFetches = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _orgFetchLock = new();
+
     private readonly object _liveLock = new();
     private int _liveWaiting;
     private DateTimeOffset _liveWaitingAt;
@@ -97,6 +100,8 @@ public sealed class CacheRefresher
             _liveWaitingAt = _clock.UtcNow;
         }
     }
+
+    public int LiveTurnsAvailable => _rsi.LiveTurnsAvailable;
 
     public bool LiveLookupWaiting
     {
@@ -129,8 +134,21 @@ public sealed class CacheRefresher
             return _staleRefreshed.Add(handle);
     }
 
-    public Task RefreshStalePlayerAsync(string handle, CancellationToken ct = default) =>
-        FetchAndStorePlayerAsync(handle, CacheSource.OrgListMember, ct);
+    public async Task RefreshStalePlayerAsync(string handle, CancellationToken ct = default)
+    {
+        var release = true;
+        try
+        {
+            var (result, _) = await FetchAndStorePlayerAsync(handle, CacheSource.OrgListMember, ct).ConfigureAwait(false);
+            release = result.Status == RsiStatus.Failed;
+        }
+        finally
+        {
+            if (release)
+                lock (_staleLock)
+                    _staleRefreshed.Remove(handle);
+        }
+    }
 
     public StaleEntries FindStale(SocialConfig config)
     {
@@ -142,7 +160,7 @@ public sealed class CacheRefresher
 
     private bool NeedsPlayerFetch(string handle, DateTimeOffset now)
     {
-        if (_database.GetNotFoundTime(NotFoundKind.Player, handle) is not null)
+        if (_database.IsKnownNotFound(handle, now))
             return false;
         var cached = _database.GetPlayer(handle);
         return cached is null || IsStale(cached.LastRefreshed, now);
@@ -150,7 +168,7 @@ public sealed class CacheRefresher
 
     private bool NeedsOrgFetch(string sid, DateTimeOffset now)
     {
-        if (_database.GetNotFoundTime(NotFoundKind.Org, sid) is not null)
+        if (_database.IsKnownOrgNotFound(sid, now))
             return false;
         var cached = _database.GetOrg(sid);
         return cached?.MembersRefreshed is not { } refreshed || IsStale(refreshed, now);
@@ -247,7 +265,7 @@ public sealed class CacheRefresher
         Interlocked.Increment(ref _liveRunning);
         try
         {
-            var page = await _rsi.GetPlayerProfileAsync(handle, ct).ConfigureAwait(false);
+            var page = await _rsi.GetPlayerProfileAsync(handle, ct, RsiLane.Live).ConfigureAwait(false);
             if (page.Status != RsiStatus.Found)
                 return null;
             _database.SaveProfile(handle, page.Data!.Moniker, ProfilePageParser.Shown(page.Data.CitizenRecord), _clock.UtcNow);
@@ -259,16 +277,13 @@ public sealed class CacheRefresher
         }
     }
 
-    public Task<PlayerLookup> LookupPlayerAsync(string handle, CancellationToken ct = default) =>
-        GetPlayerCacheFirstAsync(handle, CacheSource.OrgListMember, ct);
-
     public async Task<PlayerLookup> LookupWithAffiliatesAsync(
         string handle, CancellationToken ct = default, Func<IReadOnlyList<OrgMembership>, bool>? answerEarly = null)
     {
         Interlocked.Increment(ref _liveRunning);
         try
         {
-            var player = await GetPlayerCacheFirstAsync(handle, CacheSource.OrgListMember, ct).ConfigureAwait(false);
+            var player = await GetPlayerCacheFirstAsync(handle, CacheSource.OrgListMember, ct, RsiLane.Live).ConfigureAwait(false);
             if (player.Status != PlayerLookupStatus.Found)
                 return player;
 
@@ -284,7 +299,7 @@ public sealed class CacheRefresher
                     continue;
                 }
 
-                var org = await GetOrgAttributesAsync(membership.Sid, ct).ConfigureAwait(false);
+                var org = await GetOrgAttributesAsync(membership.Sid, ct, RsiLane.Live).ConfigureAwait(false);
                 orgs.Add(org is null ? membership : membership with { Archetype = org.Archetype, Activities = org.Activities });
             }
 
@@ -321,7 +336,7 @@ public sealed class CacheRefresher
 
     public Task TopUpAffiliateAsync(string sid, CancellationToken ct = default) => GetOrgAttributesAsync(sid, ct);
 
-    private async Task<PlayerLookup> GetPlayerCacheFirstAsync(string handle, CacheSource source, CancellationToken ct)
+    private async Task<PlayerLookup> GetPlayerCacheFirstAsync(string handle, CacheSource source, CancellationToken ct, RsiLane lane = RsiLane.Background)
     {
         if (!RsiNames.IsValidHandle(handle))
             return PlayerLookup.Failed(handle, "invalid name");
@@ -334,7 +349,7 @@ public sealed class CacheRefresher
         if (cached is not null && !IsStale(cached.LastRefreshed, now))
             return PlayerLookup.Found(cached.Handle, cached.Orgs, fromCache: true, isStale: false);
 
-        var (result, stored) = await FetchAndStorePlayerAsync(handle, source, ct).ConfigureAwait(false);
+        var (result, stored) = await FetchAndStorePlayerAsync(handle, source, ct, lane).ConfigureAwait(false);
         switch (result.Status)
         {
             case RsiStatus.Found:
@@ -350,9 +365,9 @@ public sealed class CacheRefresher
         }
     }
 
-    private async Task<(RsiResult<PlayerOrgs> Result, PlayerOrgs? Stored)> FetchAndStorePlayerAsync(string handle, CacheSource source, CancellationToken ct)
+    private async Task<(RsiResult<PlayerOrgs> Result, PlayerOrgs? Stored)> FetchAndStorePlayerAsync(string handle, CacheSource source, CancellationToken ct, RsiLane lane = RsiLane.Background)
     {
-        var result = await _rsi.GetPlayerOrgsAsync(handle, ct).ConfigureAwait(false);
+        var result = await _rsi.GetPlayerOrgsAsync(handle, ct, lane).ConfigureAwait(false);
         var now = _clock.UtcNow;
 
         switch (result.Status)
@@ -372,7 +387,7 @@ public sealed class CacheRefresher
         return (result, null);
     }
 
-    private async Task<CachedOrg?> GetOrgAttributesAsync(string sid, CancellationToken ct)
+    private async Task<CachedOrg?> GetOrgAttributesAsync(string sid, CancellationToken ct, RsiLane lane = RsiLane.Background)
     {
         var now = _clock.UtcNow;
         var cached = _database.GetOrg(sid);
@@ -385,31 +400,64 @@ public sealed class CacheRefresher
         if (!_orgGate.MayAsk(sid, now))
             return cached is { HasAttributes: true } ? cached : null;
 
-        var result = await _rsi.GetOrgInfoAsync(sid, ct).ConfigureAwait(false);
-        switch (result.Status)
+        while (true)
         {
-            case RsiStatus.Found:
-                try
-                {
-                    _database.SaveOrgAttributes(result.Data!, CacheSource.OrgListMember, _clock.UtcNow);
-                }
-                catch
-                {
+            try
+            {
+                return await SharedOrgFetch(sid, cached, ct, lane).WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+            }
+        }
+    }
+
+    private Task<CachedOrg?> SharedOrgFetch(string sid, CachedOrg? cached, CancellationToken ct, RsiLane lane)
+    {
+        lock (_orgFetchLock)
+        {
+            if (!_orgFetches.TryGetValue(sid, out var fetch))
+                _orgFetches[sid] = fetch = FetchOrgAttributesAsync(sid, cached, ct, lane);
+            return fetch;
+        }
+    }
+
+    private async Task<CachedOrg?> FetchOrgAttributesAsync(string sid, CachedOrg? cached, CancellationToken ct, RsiLane lane)
+    {
+        await Task.Yield();
+        try
+        {
+            var result = await _rsi.GetOrgInfoAsync(sid, ct, lane).ConfigureAwait(false);
+            switch (result.Status)
+            {
+                case RsiStatus.Found:
+                    try
+                    {
+                        _database.SaveOrgAttributes(result.Data!, CacheSource.OrgListMember, _clock.UtcNow);
+                    }
+                    catch
+                    {
+                        _orgGate.Failed(sid, _clock.UtcNow);
+                        throw;
+                    }
+                    _orgGate.Succeeded(sid);
+                    return _database.GetOrg(sid);
+
+                case RsiStatus.NotFound:
+                    _orgGate.NotFound(sid);
+                    if (cached?.Source != CacheSource.OrgList)
+                        _database.SaveNotFound(NotFoundKind.Org, sid, CacheSource.OrgListMember, _clock.UtcNow);
+                    return null;
+
+                default:
                     _orgGate.Failed(sid, _clock.UtcNow);
-                    throw;
-                }
-                _orgGate.Succeeded(sid);
-                return _database.GetOrg(sid);
-
-            case RsiStatus.NotFound:
-                _orgGate.NotFound(sid);
-                if (cached?.Source != CacheSource.OrgList)
-                    _database.SaveNotFound(NotFoundKind.Org, sid, CacheSource.OrgListMember, _clock.UtcNow);
-                return null;
-
-            default:
-                _orgGate.Failed(sid, _clock.UtcNow);
-                return cached is { HasAttributes: true } ? cached : null;
+                    return cached is { HasAttributes: true } ? cached : null;
+            }
+        }
+        finally
+        {
+            lock (_orgFetchLock)
+                _orgFetches.Remove(sid);
         }
     }
 

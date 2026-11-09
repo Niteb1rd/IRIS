@@ -30,12 +30,13 @@ public sealed class CacheWorker : IDisposable
     private readonly HashSet<string> _orgQueued = new(StringComparer.OrdinalIgnoreCase);
     private readonly Queue<string> _refreshQueue = new();
     private readonly HashSet<string> _wanted = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, double> _nearestMetres = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, double> _retryAtMs = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentQueue<LookupResult> _results = new();
     private readonly AutoResetEvent _signal = new(false);
-    private Task? _running;
+    private readonly List<Task> _liveLookups = new();
+    private Task? _backgroundJob;
     private SocialConfig? _config;
-    private bool _runningLive;
 
     public CacheWorker(INameSource? source, SessionNames names, IUpdateSink sink, LiveSettings live, ILog? log = null, IClock? wallClock = null)
     {
@@ -55,9 +56,16 @@ public sealed class CacheWorker : IDisposable
 
     private double _stepNowMs;
 
-    public Task? Running => _running;
+    public Task? Running
+    {
+        get
+        {
+            var active = ActiveLookups().ToList();
+            return active.Count == 0 ? null : Task.WhenAll(active);
+        }
+    }
 
-    public bool LookupRunning => _running is { IsCompleted: false };
+    public bool LookupRunning => ActiveLookups().Any();
 
     public int QueuedLookups => _queue.Count;
 
@@ -73,12 +81,14 @@ public sealed class CacheWorker : IDisposable
         _stepNowMs = nowMs;
         DrainResults(nowMs);
         _wanted.Clear();
+        _nearestMetres.Clear();
         var updates = new List<IndexUpdate>();
         foreach (var marker in snapshot.Markers)
         {
             if (marker.Status != PlateStatus.Confirmed || marker.Name is not { } name)
                 continue;
             _wanted.Add(name);
+            NoteDistance(name, marker.DistanceMetres);
             var identity = IdentityOf(name, Resolve(name, nowMs), config);
             if (identity.Rsi == RsiState.Verified && _source is not null && _sightings.Add((snapshot.Epoch, marker.Id)))
             {
@@ -106,7 +116,7 @@ public sealed class CacheWorker : IDisposable
 
     private int LiveDemand()
     {
-        int count = _runningLive && LookupRunning ? 1 : 0;
+        var count = _liveLookups.Count(lookup => !lookup.IsCompleted);
         foreach (var name in _queue)
             if (_wanted.Contains(name))
                 count++;
@@ -198,22 +208,54 @@ public sealed class CacheWorker : IDisposable
 
     private void StartNextLookup(CancellationToken ct)
     {
-        if (_source is null || LookupRunning)
+        if (_source is null)
             return;
-        while (_queue.TryDequeue(out var name))
-        {
-            if (!_wanted.Contains(name))
-            {
-                _queued.Remove(name);
-                continue;
-            }
 
-            _running = RunLookupAsync(name, ct);
-            _runningLive = true;
+        ForgetNamesThatLeft();
+        PutNearestFirst();
+        _liveLookups.RemoveAll(lookup => lookup.IsCompleted);
+        var turns = _source.LiveTurnsAvailable;
+        while (turns > 0 && _liveLookups.Count < CacheSettings.RsiLiveBurst && _queue.TryDequeue(out var name))
+        {
+            _liveLookups.Add(SignalWhenDone(RunLookupAsync(name, ct)));
             TraceLookup("live", name);
-            return;
+            turns--;
         }
 
+        if (_queue.Count == 0 && _backgroundJob is not { IsCompleted: false })
+            StartBackgroundJob(ct);
+    }
+
+    private void NoteDistance(string name, double metres)
+    {
+        var known = double.IsNaN(metres) ? double.PositiveInfinity : metres;
+        _nearestMetres[name] = _nearestMetres.TryGetValue(name, out var seen) ? Math.Min(seen, known) : known;
+    }
+
+    private void PutNearestFirst()
+    {
+        if (_queue.Count < 2)
+            return;
+        var nearestFirst = _queue.OrderBy(name => _nearestMetres.GetValueOrDefault(name, double.PositiveInfinity)).ToList();
+        _queue.Clear();
+        foreach (var name in nearestFirst)
+            _queue.Enqueue(name);
+    }
+
+    private void ForgetNamesThatLeft()
+    {
+        for (var remaining = _queue.Count; remaining > 0; remaining--)
+        {
+            var name = _queue.Dequeue();
+            if (_wanted.Contains(name))
+                _queue.Enqueue(name);
+            else
+                _queued.Remove(name);
+        }
+    }
+
+    private void StartBackgroundJob(CancellationToken ct)
+    {
         while (_orgQueue.TryDequeue(out var item))
         {
             if (!_wanted.Contains(item.Name))
@@ -222,18 +264,42 @@ public sealed class CacheWorker : IDisposable
                 continue;
             }
 
-            _running = RunTopUpAsync(item.Sid, ct);
-            _runningLive = false;
+            _backgroundJob = SignalWhenDone(RunTopUpAsync(item.Sid, ct));
             TraceLookup("topup", item.Sid);
             return;
         }
 
         if (_refreshQueue.TryDequeue(out var stale))
         {
-            _running = RunRefreshAsync(stale, ct);
-            _runningLive = false;
+            _backgroundJob = SignalWhenDone(RunRefreshAsync(stale, ct));
             TraceLookup("refresh", stale);
         }
+    }
+
+    private IEnumerable<Task> ActiveLookups()
+    {
+        foreach (var lookup in _liveLookups)
+            if (!lookup.IsCompleted)
+                yield return lookup;
+        if (_backgroundJob is { IsCompleted: false } job)
+            yield return job;
+    }
+
+    private Task SignalWhenDone(Task lookup)
+    {
+        lookup.ContinueWith(
+            static (_, state) =>
+            {
+                try
+                {
+                    ((AutoResetEvent)state!).Set();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            },
+            _signal, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return lookup;
     }
 
     private void TraceLookup(string kind, string name)
@@ -258,13 +324,6 @@ public sealed class CacheWorker : IDisposable
         }
 
         _results.Enqueue(new LookupResult(name, null, error, Refreshed: true));
-        try
-        {
-            _signal.Set();
-        }
-        catch (ObjectDisposedException)
-        {
-        }
     }
 
     private async Task RunTopUpAsync(string sid, CancellationToken ct)
@@ -283,13 +342,6 @@ public sealed class CacheWorker : IDisposable
         }
 
         _results.Enqueue(new LookupResult(sid, null, error, sid));
-        try
-        {
-            _signal.Set();
-        }
-        catch (ObjectDisposedException)
-        {
-        }
     }
 
     private void Refresh(string sid)
@@ -318,13 +370,6 @@ public sealed class CacheWorker : IDisposable
         }
 
         _results.Enqueue(new LookupResult(name, answer, error));
-        try
-        {
-            _signal.Set();
-        }
-        catch (ObjectDisposedException)
-        {
-        }
     }
 
     private void DrainResults(double nowMs)
@@ -377,15 +422,38 @@ public sealed class CacheWorker : IDisposable
 
     private MarkerIdentity IdentityOf(string name, NameAnswer answer, SocialConfig config)
     {
-        if (_identities.TryGetValue(name, out var known) && ReferenceEquals(known.Answer, answer))
+        var hadIdentity = _identities.TryGetValue(name, out var known);
+        if (hadIdentity && ReferenceEquals(known.Answer, answer))
             return known.Identity;
         var model = OverlayModelBuilder.Build(new[] { new DetectedPlayer(name, default) }, config, _ => answer.Orgs);
         var bracket = model.Brackets[0];
         var identity = new MarkerIdentity(name, bracket.Kind, bracket.Color, model.Panel[0].Orgs, answer.State);
+        if (hadIdentity && SameContent(known.Identity, identity))
+            identity = known.Identity;
         if (_identities.Count >= _live.CacheRemembered)
             _identities.Clear();
         _identities[name] = (answer, identity);
         return identity;
+    }
+
+    private static bool SameContent(MarkerIdentity a, MarkerIdentity b) =>
+        a.Handle == b.Handle && a.Kind == b.Kind && a.Color == b.Color && a.Rsi == b.Rsi && Equals(a.Orgs.Match, b.Orgs.Match) && SameOrgs(a.Orgs.Orgs, b.Orgs.Orgs);
+
+    private static bool SameOrgs(IReadOnlyList<OrgMembership>? a, IReadOnlyList<OrgMembership>? b)
+    {
+        if (a is null || b is null)
+            return a is null && b is null;
+        if (a.Count != b.Count)
+            return false;
+        for (var i = 0; i < a.Count; i++)
+        {
+            var x = a[i];
+            var y = b[i];
+            if (x.Sid != y.Sid || x.IsMain != y.IsMain || x.Archetype != y.Archetype || x.Name != y.Name || !x.ActivityList.SequenceEqual(y.ActivityList))
+                return false;
+        }
+
+        return true;
     }
 
     public void Dispose()

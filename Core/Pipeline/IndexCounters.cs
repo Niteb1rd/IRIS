@@ -109,18 +109,6 @@ public sealed class IndexCounters
             list.Add(value);
     }
 
-    public int Rejected(PipelineGroup group)
-    {
-        lock (_gate)
-            return _rejected[(int)group];
-    }
-
-    public int ExpiredUnfulfilled(PipelineGroup group)
-    {
-        lock (_gate)
-            return _expired[(int)group];
-    }
-
     public IReadOnlyList<string> TakeTexts()
     {
         lock (_gate)

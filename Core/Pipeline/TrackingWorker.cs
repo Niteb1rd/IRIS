@@ -85,6 +85,9 @@ public sealed class TrackingWorker
         foreach (var marker in tracked)
             if (!regions.ContainsKey(marker.Id) && _matched.GetValueOrDefault(marker.Id, true))
                 claimed.Add(marker.Line);
+        foreach (var marker in snapshot.Markers)
+            if (marker.Status == PlateStatus.Stopped && !tracked.Any(live => BoxMath.Overlap(live.Line, marker.Line) > settings.ClaimedOverlap))
+                claimed.Add(marker.Line);
 
         var updates = new List<IndexUpdate>();
         var current = new Dictionary<int, MarkerRecord>();

@@ -19,18 +19,24 @@ public sealed class LayerCheck
 
     public bool Active => Rule != LayerRule.Brightest;
 
-    internal void Note(bool shifted)
+    public void Note(bool shifted)
     {
-        if (_verdicts.Count < MaxVerdicts)
-            _verdicts.Add(shifted);
+        lock (_verdicts)
+        {
+            if (_verdicts.Count < MaxVerdicts)
+                _verdicts.Add(shifted);
+        }
     }
 
     public IReadOnlyList<bool> TakeVerdicts()
     {
-        if (_verdicts.Count == 0)
-            return Array.Empty<bool>();
-        var taken = _verdicts.ToArray();
-        _verdicts.Clear();
-        return taken;
+        lock (_verdicts)
+        {
+            if (_verdicts.Count == 0)
+                return Array.Empty<bool>();
+            var taken = _verdicts.ToArray();
+            _verdicts.Clear();
+            return taken;
+        }
     }
 }

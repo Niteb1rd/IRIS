@@ -60,7 +60,7 @@ public sealed class RefresherNameSource : INameSource
 
     public NameAnswer? Provisional(string name, SocialConfig config)
     {
-        if (config.Orgs.Count == 0)
+        if (config.Orgs.Count == 0 || (config.OrgsMainOrgOnly && config.OrgRulesMainOrgOnly))
             return null;
         try
         {
@@ -93,6 +93,8 @@ public sealed class RefresherNameSource : INameSource
     }
 
     public Task RefreshInBackgroundAsync(string name, CancellationToken ct) => _refresher.RefreshStalePlayerAsync(name, ct);
+
+    public int LiveTurnsAvailable => _refresher.LiveTurnsAvailable;
 
     public void SetLiveWaiting(int count) => _refresher.SetLiveWaiting(count);
 

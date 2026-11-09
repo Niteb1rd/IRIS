@@ -15,18 +15,13 @@ public enum NameGate
     Centre,
 }
 
-public readonly record struct NameGateCounts(int Width, int Gap, int Centre, int NotFound)
-{
-    public int Total => Width + Gap + Centre + NotFound;
-}
+public readonly record struct NameGateCounts(int Width, int Gap, int Centre, int NotFound);
 
 public sealed record Assignment(
     IReadOnlyDictionary<int, FoundLine> Chosen, bool Contested, int Overrides, NameGateCounts NameFailures, int ColourMismatches = 0, int LowFingerprints = 0,
     IReadOnlyDictionary<int, int>? Places = null, int LostRefused = 0, IReadOnlyList<LostRefusalSample>? LostRefusals = null,
     IReadOnlyDictionary<int, NameEvidence>? Evidence = null)
 {
-    public int NameCheckFailed => NameFailures.Total;
-
     public NameEvidence EvidenceOf(int id) => Evidence is { } evidence && evidence.TryGetValue(id, out var value) ? value : NameEvidence.None;
 
     public int Count(NameEvidence evidence) => Evidence is null ? 0 : Evidence.Values.Count(e => e == evidence);

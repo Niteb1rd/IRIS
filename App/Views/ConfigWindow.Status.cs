@@ -128,6 +128,14 @@ public partial class ConfigWindow
             SetFooter(message);
     }
 
+    public bool TakePoll(ConfigPoll poll)
+    {
+        if (_isClosed || _pendingPoll is not null)
+            return false;
+        _pendingPoll = poll;
+        return true;
+    }
+
     private bool IsIdle() => !_saving && _busyCount == 0 && !_imports.IsBusy && !_closePromptOpen;
 
     private async void OnWatchTick(object? sender, EventArgs e)
@@ -153,9 +161,11 @@ public partial class ConfigWindow
             }
 
             _pendingPoll = null;
+            var listsEdited = Snapshot() != _baseline;
+            var settingsEdited = BuildSettings() != _services.Settings;
             var changes = _services.ApplyPoll(poll);
             if (!_isClosed)
-                ShowConfigChanges(changes);
+                ShowConfigChanges(changes, listsEdited, settingsEdited);
         }
         catch (Exception ex)
         {
@@ -167,14 +177,14 @@ public partial class ConfigWindow
         }
     }
 
-    private void ShowConfigChanges(ConfigChanges changes)
+    private void ShowConfigChanges(ConfigChanges changes, bool listsEdited, bool settingsEdited)
     {
-        if (changes.ListChanged)
+        if (changes.ListChanged && !listsEdited)
         {
             LoadRowsFrom(_services.CurrentConfig);
             _baseline = Snapshot();
         }
-        if (changes.SettingsChanged)
+        if (changes.SettingsChanged && !settingsEdited)
         {
             LoadSettingsControls();
             ApplyWindowScale();
@@ -188,7 +198,9 @@ public partial class ConfigWindow
         RefreshStateUi();
         if (!_services.ListFileMissing && FooterStatus.Text == MissingListNotice)
             SetFooter(string.Empty);
-        if (changes.Message is { } message)
+        if ((changes.ListChanged && listsEdited) || (changes.SettingsChanged && settingsEdited))
+            SetFooter("A config file changed outside IRIS. Your unsaved edits are kept; saving them replaces that change.");
+        else if (changes.Message is { } message)
             SetFooter(message);
     }
 }

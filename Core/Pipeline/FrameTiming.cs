@@ -4,8 +4,6 @@ public sealed class TrackingSchedule
 {
     private double _nextAllowed = double.NaN;
 
-    public double NextAllowedMs => _nextAllowed;
-
     public void Reset() => _nextAllowed = double.NaN;
 
     public static double PeriodMs(int capFps) => capFps <= 0 ? 0.0 : 1000.0 / capFps;

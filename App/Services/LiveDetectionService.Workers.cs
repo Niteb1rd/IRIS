@@ -114,9 +114,11 @@ public sealed partial class LiveDetectionService
 
     private bool Ready(out PipelineEnvironment environment, out NameplateReader reader)
     {
-        environment = _environment!;
-        reader = _reader!;
-        return _running && _environment is not null && _reader is not null;
+        var currentEnvironment = _environment;
+        var currentReader = _reader;
+        environment = currentEnvironment!;
+        reader = currentReader!;
+        return _running && currentEnvironment is not null && currentReader is not null;
     }
 
     private void TrackingLoop()
@@ -279,8 +281,12 @@ public sealed partial class LiveDetectionService
 
                 var now = _clock.NowMs;
                 var config = _services.CurrentConfig;
-                if (rate.TryTick(now, out _))
-                    worker.Prepare(_index.Current, env, now, config);
+                var snapshot = _index.Current;
+                var early = worker.WantsEarlyRead(snapshot);
+                if (early)
+                    rate.TickNow(now);
+                if (early || rate.TryTick(now, out _))
+                    worker.Prepare(snapshot, env, now, config);
                 if (worker.HasPending && _frames.TakeNewestWith(PipelineGroup.Reads) is { } frame)
                 {
                     try
