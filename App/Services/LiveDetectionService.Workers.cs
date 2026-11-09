@@ -34,6 +34,8 @@ public sealed partial class LiveDetectionService
                 Notify(snapshot);
                 if (!_services.Milestones.PipelineDone)
                     NoteMilestones(snapshot);
+                if (snapshot.Aberration == AberrationState.On && !_services.Milestones.AberrationSeen)
+                    _services.Milestones.AberrationDetected();
                 lastProblem = null;
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -66,7 +68,7 @@ public sealed partial class LiveDetectionService
     private void Notify(IndexSnapshot snapshot)
     {
         var at = _clock.NowMs;
-        var model = IndexModel.ModelAt(snapshot, at, _pipe, _live, _lastShown);
+        var model = IndexModel.ModelAt(snapshot, at, _pipe, _live, _lastShown, _services.Settings.TrackingLossDisplaySeconds * 1000.0);
         var stalled = at - _lastIndexPublishMs > IndexModel.FreshnessLimitMs(snapshot, _pipe);
         _lastIndexPublishMs = at;
         var last = _lastShown;
@@ -140,7 +142,7 @@ public sealed partial class LiveDetectionService
                     tracker = new MarkerTracker(_pipe, finder, env.WindowHeight);
                     worker = new TrackingWorker(_pipe, tracker, _queue, _clock, _stats)
                     {
-                        Trace = _trace, KeepCrop = AppVersion.Diagnostics ? KeepTrackingCrop : null,
+                        Trace = _trace, KeepCrop = AppVersion.Diagnostics ? KeepTrackingCrop : null, KeepLoss = AppVersion.Diagnostics ? KeepLossGroup : null,
                     };
                     height = env.WindowHeight;
                 }
@@ -396,7 +398,7 @@ public sealed partial class LiveDetectionService
         }
     }
 
-    private bool MiningEnabled => !_services.IsOverlayDisabled && _services.Settings.PanelEnabled && !_services.Settings.MiningDisabled;
+    private bool MiningEnabled => !_services.IsOverlayDisabled && !_services.Settings.MiningDisabled;
 
     private void MiningLoop()
     {
@@ -421,6 +423,7 @@ public sealed partial class LiveDetectionService
                 worker ??= new MiningWorker(_mining, _pipe, reader, _miningTables, _queue, _clock, _stats)
                 {
                     Trace = _trace, Changed = OnMiningChanged, KeepCrop = AppVersion.Diagnostics ? KeepMiningCrop : null,
+                    KeepTableCrop = AppVersion.Diagnostics ? KeepTableCrop : null, KeepLoss = AppVersion.Diagnostics ? KeepLossGroup : null,
                 };
                 var wantedHz = MiningLockHz(_index.Current);
                 if (Math.Abs(wantedHz - rateHz) >= MiningRateStepHz)
@@ -469,85 +472,6 @@ public sealed partial class LiveDetectionService
         var text = read.Text.Length == 0 ? "?" : read.Text;
         _services.Milestones.MiningSignalFound(text);
         DiagnosticLog?.Write(_services.Clock.UtcNow, $"Mining: signal found: {text} ({read.State}) -> {label ?? "no label"}");
-    }
-
-    private int _miningCropsKept;
-    private int _trackingCropsKept;
-    private int _readCropsKept;
-
-    private void KeepReadCrop(Mat image, string name)
-    {
-        if (++_readCropsKept > _pipe.ReadCropsPerRun)
-            return;
-        var copy = image.Clone();
-        var folder = Path.Combine(_services.Paths.LogsFolder, "reads");
-        var file = string.Create(CultureInfo.InvariantCulture, $"{DateTime.Now:yyyyMMdd-HHmmss-fff}_{name}.png");
-        ThreadPool.QueueUserWorkItem(_ =>
-        {
-            try
-            {
-                Directory.CreateDirectory(folder);
-                Cv2.ImWrite(Path.Combine(folder, file), copy);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OpenCVException)
-            {
-            }
-            finally
-            {
-                copy.Dispose();
-            }
-        });
-    }
-
-    private void KeepTrackingCrop(Mat image, string name)
-    {
-        if (++_trackingCropsKept > _pipe.TrackCropsPerRun)
-            return;
-        var copy = image.Clone();
-        var folder = Path.Combine(_services.Paths.LogsFolder, "tracking");
-        var file = string.Create(CultureInfo.InvariantCulture, $"{DateTime.Now:yyyyMMdd-HHmmss-fff}_{name}.png");
-        ThreadPool.QueueUserWorkItem(_ =>
-        {
-            try
-            {
-                Directory.CreateDirectory(folder);
-                Cv2.ImWrite(Path.Combine(folder, file), copy);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OpenCVException)
-            {
-            }
-            finally
-            {
-                copy.Dispose();
-            }
-        });
-    }
-
-    private void KeepMiningCrop(Mat image, Rect region, int windowWidth, int windowHeight, SignalRead read)
-    {
-        if (Interlocked.Increment(ref _miningCropsKept) > _mining.KeptCropsPerRun)
-            return;
-        var copy = image.Clone();
-        var folder = Path.Combine(_services.Paths.LogsFolder, "mining");
-        var text = read.Text.Length == 0 ? "none" : read.Text.Replace(",", string.Empty, StringComparison.Ordinal);
-        var name = string.Create(
-            CultureInfo.InvariantCulture,
-            $"{DateTime.Now:yyyyMMdd-HHmmss-fff}_{text}_{read.State}_x{region.X}y{region.Y}w{windowWidth}h{windowHeight}.png");
-        ThreadPool.QueueUserWorkItem(_ =>
-        {
-            try
-            {
-                Directory.CreateDirectory(folder);
-                Cv2.ImWrite(Path.Combine(folder, name), copy);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OpenCVException)
-            {
-            }
-            finally
-            {
-                copy.Dispose();
-            }
-        });
     }
 
     private void OnMiningChanged(SignalRead read, MiningState? state)

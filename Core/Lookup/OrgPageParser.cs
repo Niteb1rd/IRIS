@@ -15,6 +15,8 @@ public static class OrgPageParser
 
     private const string TagSelector = ".tags li, .tags span, .tags a, .focus li, .focus img, .focus span";
 
+    private const string FocusIconSelector = ".focus img";
+
     private const string MemberCountSelector = ".count, .logo .count";
 
     private static readonly Regex MemberCountPattern =
@@ -84,8 +86,30 @@ public static class OrgPageParser
             }
         }
 
-        return RsiResult<OrgInfo>.Found(new OrgInfo(sid, longName, memberCount, archetype, commitment, exclusive, activities));
+        return RsiResult<OrgInfo>.Found(new OrgInfo(sid, longName, memberCount, archetype, commitment, exclusive, activities, UnknownActivities(doc)));
     }
+
+    private static IReadOnlyList<string>? UnknownActivities(IParentNode doc)
+    {
+        List<string>? unknown = null;
+        foreach (var icon in doc.QuerySelectorAll(FocusIconSelector))
+        {
+            foreach (var attribute in new[] { "alt", "title" })
+            {
+                var text = HtmlText.Clean(icon.GetAttribute(attribute));
+                if (text.Length == 0 || text.Length > 40 || IsKnownWord(text))
+                    continue;
+                unknown ??= new List<string>();
+                if (!unknown.Contains(text, StringComparer.OrdinalIgnoreCase))
+                    unknown.Add(text);
+            }
+        }
+        return unknown;
+    }
+
+    private static bool IsKnownWord(string text) =>
+        OrgVocabulary.MatchActivity(text) is not null || OrgVocabulary.MatchArchetype(text) is not null
+        || OrgVocabulary.MatchCommitment(text) is not null || OrgVocabulary.IsExclusive(text);
 
     private static int? ReadMemberCount(string text)
     {

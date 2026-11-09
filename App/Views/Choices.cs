@@ -9,11 +9,7 @@ public sealed record KindChoice(AttributeKind Kind, string Name);
 
 public static class Choices
 {
-    public const int DefaultPriority = 5;
-
     public static IReadOnlyList<OverlayColor> Colors { get; } = Enum.GetValues<OverlayColor>();
-
-    public static IReadOnlyList<int> Priorities { get; } = new[] { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
 
     public static IReadOnlyList<KindChoice> Kinds { get; } = new[]
     {

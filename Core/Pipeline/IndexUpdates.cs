@@ -72,7 +72,7 @@ public static class CaptureRule
     }
 }
 
-public sealed record SessionMemoryEntry(string Name, double Width, double Height, double EndedMs, EndReason Reason, double LineHeight = 0.0, int[]? Fingerprint = null);
+public sealed record SessionMemoryEntry(string Name, double Width, double Height, double EndedMs, EndReason Reason, double LineHeight = 0.0, int[]? Fingerprint = null, MarkerIdentity? Identity = null);
 
 public abstract record IndexUpdate(PipelineGroup Group, double FrameMs, int Epoch)
 {
@@ -118,6 +118,8 @@ public sealed record TrackingHitUpdate(
 
 public sealed record PositionUpdate(PipelineGroup Group, double FrameMs, int Epoch, int Id, PixelRect Line, double DistanceWidth = double.NaN) : IndexUpdate(Group, FrameMs, Epoch);
 
+public sealed record TemplateHitUpdate(PipelineGroup Group, double FrameMs, int Epoch, int Id, double CentreX, double Top) : IndexUpdate(Group, FrameMs, Epoch);
+
 public sealed record StatusUpdate(PipelineGroup Group, double FrameMs, int Epoch, int Id, PlateStatus Status) : IndexUpdate(Group, FrameMs, Epoch);
 
 public sealed record ConfirmUpdate(PipelineGroup Group, double FrameMs, int Epoch, int Id, string Name, PixelRect NameRel, PixelRect PlateRel, NameLineInfo? NameLine = null) : IndexUpdate(Group, FrameMs, Epoch);
@@ -141,6 +143,8 @@ public sealed record SettingsUpdate(PipelineGroup Group, double FrameMs, int Epo
 public sealed record LateNoteUpdate(PipelineGroup Group, double FrameMs, int Epoch, bool Active) : IndexUpdate(Group, FrameMs, Epoch);
 
 public sealed record BlankNoteUpdate(PipelineGroup Group, double FrameMs, int Epoch, bool Active) : IndexUpdate(Group, FrameMs, Epoch);
+
+public sealed record AberrationUpdate(PipelineGroup Group, double FrameMs, int Epoch, AberrationState State, bool Note) : IndexUpdate(Group, FrameMs, Epoch);
 
 public sealed record MiningUpdate(PipelineGroup Group, double FrameMs, int Epoch, Iris.Core.Mining.MiningState? State) : IndexUpdate(Group, FrameMs, Epoch);
 

@@ -34,27 +34,31 @@ public partial class ConfigWindow
         var settings = _services.Settings;
         CacheTtlCombo.SelectedIndex = settings.CacheTtlDays == 7 ? 1 : 0;
         OverlayHotkeyBox.HotkeyValue = settings.HotkeyToggleOverlay;
-        PanelHotkeyBox.HotkeyValue = settings.HotkeyTogglePanel;
         TimedHotkeyBox.HotkeyValue = settings.HotkeyTimedOverlay;
+        InteractiveHotkeyBox.HotkeyValue = settings.HotkeyInteractiveOverlay;
         TimedSecondsCombo.SelectedIndex = TimedSecondsIndex(settings.TimedOverlaySeconds);
         PanelWidthSlider.Value = settings.PanelWidthPercent;
         PanelTextSizeSlider.Value = settings.PanelTextSize;
         PanelRightGapSlider.Value = settings.PanelRightGapPercent;
         PanelTopGapSlider.Value = settings.PanelTopGapPercent;
+        DossierWidthSlider.Value = settings.DossierWidthPercent;
         OrgDisplayCombo.SelectedIndex = settings.PanelOrgDisplay == OrgDisplay.Sid ? 1 : 0;
         MainOrgOnlyCheck.IsChecked = settings.PanelMainOrgOnly;
+        ImportModeCombo.SelectedIndex = Math.Max(0, IndexOfImportMode(settings.ImportMode));
         BoundaryTopSlider.Value = settings.BoundaryTop;
         BoundaryBottomSlider.Value = settings.BoundaryBottom;
         BoundaryLeftSlider.Value = settings.BoundaryLeft;
         BoundaryRightSlider.Value = settings.BoundaryRight;
         TrackingFpsSlider.Value = settings.NameplateTrackingFps;
         UpdateTrackingFpsLabel();
+        TrackingLossCombo.SelectedIndex = TrackingLossIndex(settings.TrackingLossDisplaySeconds);
         CaptureMethodCombo.SelectedIndex = settings.CaptureMethod == CaptureMethod.WindowCapture ? 1 : 0;
         _visibleInCaptureStored = settings.OverlayVisibleInCapture;
         _hideBorderStored = settings.HideCaptureBorder;
         ShowCaptureControls();
         CheckForUpdatesCheck.IsChecked = settings.CheckForUpdates;
         MiningDisabledCheck.IsChecked = settings.MiningDisabled;
+        MiningZoomSlider.Value = settings.MiningLabelZoomPercent;
         WindowScaleCombo.SelectedIndex = ScaleIndex(settings.SettingsWindowScale);
         _darkModeShownOn = AppTheme.Resolve(settings.SettingsDarkMode);
         DarkModeCombo.SelectedIndex = _darkModeShownOn ? 0 : 1;
@@ -72,8 +76,8 @@ public partial class ConfigWindow
     {
         CacheTtlDays = CacheTtlCombo.SelectedIndex == 1 ? 7 : 30,
         HotkeyToggleOverlay = OverlayHotkeyBox.HotkeyValue,
-        HotkeyTogglePanel = PanelHotkeyBox.HotkeyValue,
         HotkeyTimedOverlay = TimedHotkeyBox.HotkeyValue,
+        HotkeyInteractiveOverlay = InteractiveHotkeyBox.HotkeyValue,
         TimedOverlaySeconds = TimedSecondsCombo.SelectedIndex >= 0
             ? AppSettings.TimedOverlaySecondsMin + TimedSecondsCombo.SelectedIndex
             : _services.Settings.TimedOverlaySeconds,
@@ -81,18 +85,26 @@ public partial class ConfigWindow
         PanelTextSize = (int)Math.Round(PanelTextSizeSlider.Value),
         PanelRightGapPercent = (int)Math.Round(PanelRightGapSlider.Value),
         PanelTopGapPercent = (int)Math.Round(PanelTopGapSlider.Value),
+        DossierWidthPercent = (int)Math.Round(DossierWidthSlider.Value),
         PanelOrgDisplay = OrgDisplayCombo.SelectedIndex == 1 ? OrgDisplay.Sid : OrgDisplay.FullName,
         PanelMainOrgOnly = MainOrgOnlyCheck.IsChecked == true,
+        ImportMode = ImportModeCombo.SelectedIndex >= 0 && ImportModeCombo.SelectedIndex < AppSettingsToml.ImportModes.Count
+            ? AppSettingsToml.ImportModes[ImportModeCombo.SelectedIndex]
+            : _services.Settings.ImportMode,
         BoundaryTop = (int)Math.Round(BoundaryTopSlider.Value),
         BoundaryBottom = (int)Math.Round(BoundaryBottomSlider.Value),
         BoundaryLeft = (int)Math.Round(BoundaryLeftSlider.Value),
         BoundaryRight = (int)Math.Round(BoundaryRightSlider.Value),
         NameplateTrackingFps = (int)Math.Round(TrackingFpsSlider.Value),
+        TrackingLossDisplaySeconds = TrackingLossCombo.SelectedIndex >= 0
+            ? AppSettings.TrackingLossSecondsMin + TrackingLossCombo.SelectedIndex * AppSettings.TrackingLossSecondsStep
+            : _services.Settings.TrackingLossDisplaySeconds,
         CaptureMethod = SelectedCaptureMethod(),
         OverlayVisibleInCapture = OverlayVisibleInCaptureCheck.IsEnabled ? OverlayVisibleInCaptureCheck.IsChecked == true : _visibleInCaptureStored,
         HideCaptureBorder = HideCaptureBorderCheck.IsEnabled ? HideCaptureBorderCheck.IsChecked == true : _hideBorderStored,
         CheckForUpdates = CheckForUpdatesCheck.IsChecked == true,
         MiningDisabled = MiningDisabledCheck.IsChecked == true,
+        MiningLabelZoomPercent = (int)Math.Round(MiningZoomSlider.Value),
         SettingsWindowScale = WindowScaleCombo.SelectedIndex >= 0
             ? AppSettings.SettingsWindowScales[WindowScaleCombo.SelectedIndex]
             : _services.Settings.SettingsWindowScale,
@@ -101,6 +113,17 @@ public partial class ConfigWindow
         HostedConfigUrl = HostedUrlBox.Text.Trim(),
         HostedConfigAutoCheck = HostedAutoCheck.IsChecked == true && IsHostedUrlUsable(),
     };
+
+    private static int IndexOfImportMode(ImportMode mode)
+    {
+        for (int i = 0; i < AppSettingsToml.ImportModes.Count; i++)
+            if (AppSettingsToml.ImportModes[i] == mode)
+                return i;
+        return -1;
+    }
+
+    private static int TrackingLossIndex(int seconds) =>
+        (Math.Clamp(seconds, AppSettings.TrackingLossSecondsMin, AppSettings.TrackingLossSecondsMax) - AppSettings.TrackingLossSecondsMin) / AppSettings.TrackingLossSecondsStep;
 
     private static int TimedSecondsIndex(int seconds) =>
         Math.Clamp(seconds, AppSettings.TimedOverlaySecondsMin, AppSettings.TimedOverlaySecondsMax) - AppSettings.TimedOverlaySecondsMin;
@@ -211,22 +234,22 @@ public partial class ConfigWindow
 
     private void OnClearOverlayHotkey(object sender, RoutedEventArgs e) => OverlayHotkeyBox.ClearHotkey();
 
-    private void OnClearPanelHotkey(object sender, RoutedEventArgs e) => PanelHotkeyBox.ClearHotkey();
-
     private void OnClearTimedHotkey(object sender, RoutedEventArgs e) => TimedHotkeyBox.ClearHotkey();
+
+    private void OnClearInteractiveHotkey(object sender, RoutedEventArgs e) => InteractiveHotkeyBox.ClearHotkey();
 
     private void OnHotkeyStatusChanged(object? sender, EventArgs e) => UpdateHotkeyErrors();
 
     private void UpdateHotkeyErrors()
     {
-        if (OverlayHotkeyError is null || PanelHotkeyError is null || TimedHotkeyError is null)
+        if (OverlayHotkeyError is null || TimedHotkeyError is null || InteractiveHotkeyError is null)
             return;
         var saved = _services.Settings;
         var rows = new (HotkeyAction Action, HotkeyBox Box, TextBlock Error)[]
         {
             (HotkeyAction.ToggleOverlay, OverlayHotkeyBox, OverlayHotkeyError),
-            (HotkeyAction.TogglePanel, PanelHotkeyBox, PanelHotkeyError),
             (HotkeyAction.TimedOverlay, TimedHotkeyBox, TimedHotkeyError),
+            (HotkeyAction.InteractiveOverlay, InteractiveHotkeyBox, InteractiveHotkeyError),
         };
 
         foreach (var row in rows)
@@ -298,7 +321,8 @@ public partial class ConfigWindow
     }
 
     internal const string RecordingTip =
-        "Recording software must be set to capture desktop to record the IRIS overlay. If set to capture Star Citizen, the overlay will not be captured.";
+        "Recording software must be set to capture desktop to record the IRIS overlay. If set to capture Star Citizen, the overlay will not be captured."
+        + "\n\nWARNING: Your dossier notes will be visible as well.";
 
     private void OnVisibleInCaptureClick(object sender, RoutedEventArgs e)
     {
@@ -309,7 +333,7 @@ public partial class ConfigWindow
 
     private void OnShowBoundary(object sender, RoutedEventArgs e) => ToggleTest(TestOverlayPart.Boundary);
 
-    private void OnShowInfoPanel(object sender, RoutedEventArgs e) => ToggleTest(TestOverlayPart.Panel);
+    private void OnShowOverlay(object sender, RoutedEventArgs e) => ToggleTest(TestOverlayPart.Panel);
 
     private void ToggleTest(TestOverlayPart part)
     {
@@ -335,7 +359,7 @@ public partial class ConfigWindow
         catch (Exception ex)
         {
             _services.Log.Write(DateTimeOffset.UtcNow, "Test overlay failed: " + ex);
-            SetFooter("Could not show the test overlay: " + ex.Message);
+            SetFooter("Could not show the sample: " + ex.Message);
         }
     }
 
@@ -345,10 +369,10 @@ public partial class ConfigWindow
             return;
         UpdateTestButton();
         if (!_overlay.IsTestRunning && !_testStoppedByUser)
-            SetFooter("Sample overlay ended.");
+            SetFooter($"{TestName(_overlay.TestPart)} ended.");
     }
 
-    private static string TestName(TestOverlayPart part) => part == TestOverlayPart.Boundary ? "Boundary sample" : "Info panel sample";
+    private static string TestName(TestOverlayPart part) => part == TestOverlayPart.Boundary ? "Boundary sample" : "Overlay sample";
 
     private void UpdateTestButton()
     {
@@ -357,8 +381,8 @@ public partial class ConfigWindow
             ? $"Stop Boundary ({_overlay.TestSecondsLeft} s)"
             : "Show Boundary";
         PanelTestButton.Content = running && _overlay.TestPart == TestOverlayPart.Panel
-            ? $"Stop Info Panel ({_overlay.TestSecondsLeft} s)"
-            : "Show Info Panel";
+            ? $"Stop Overlay ({_overlay.TestSecondsLeft} s)"
+            : "Show Overlay";
     }
 
     private void OnHostedUrlLostFocus(object sender, KeyboardFocusChangedEventArgs e) => ValidateHostedUrl();

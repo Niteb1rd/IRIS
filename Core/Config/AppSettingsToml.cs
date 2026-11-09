@@ -30,12 +30,15 @@ public static class AppSettingsToml
     {
         "format_version", "cache_ttl_days", "session_log_enabled", "hosted_config_url", "hosted_config_last_hash",
         "hosted_config_auto_check", "hosted_config_last_check",
-        "panel_enabled", "panel_width_percent", "panel_text_size", "panel_right_gap_percent", "panel_top_gap_percent",
+        "panel_width_percent", "panel_text_size", "panel_right_gap_percent", "panel_top_gap_percent",
         "boundary_top", "boundary_bottom", "boundary_left", "boundary_right",
-        "nameplate_tracking_fps", "capture_method", "overlay_visible_in_capture", "hide_capture_border", "check_for_updates",
-        "settings_window_scale", "settings_dark_mode", "overlay_disabled", "hotkey_toggle_overlay", "hotkey_toggle_panel",
-        "hotkey_timed_overlay", "timed_overlay_seconds", "mining_disabled", "panel_org_display", "panel_main_org_only",
+        "nameplate_tracking_fps", "tracking_loss_display_seconds", "capture_method", "overlay_visible_in_capture", "hide_capture_border", "check_for_updates",
+        "settings_window_scale", "settings_dark_mode", "overlay_disabled", "hotkey_toggle_overlay",
+        "hotkey_timed_overlay", "timed_overlay_seconds", "mining_disabled", "mining_label_zoom_percent", "panel_org_display", "panel_main_org_only", "import_mode",
+        "hotkey_interactive_overlay", "dossier_width_percent",
     };
+
+    private static readonly string[] RetiredKeys = { "interactive_exit_key", "panel_enabled", "hotkey_toggle_panel" };
 
     private const string TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'";
 
@@ -50,20 +53,22 @@ public static class AppSettingsToml
         sb.AppendLine($"hosted_config_url = {SocialConfigToml.Quote(settings.HostedConfigUrl ?? string.Empty)}");
         sb.AppendLine($"hosted_config_last_hash = {SocialConfigToml.Quote(settings.HostedConfigLastHash ?? string.Empty)}");
         sb.AppendLine($"hosted_config_auto_check = {Bool(settings.HostedConfigAutoCheck)}");
+        sb.AppendLine($"import_mode = {SocialConfigToml.Quote(ImportModeText(settings.ImportMode))}");
         if (settings.HostedConfigLastCheck is { } lastCheck)
             sb.AppendLine($"hosted_config_last_check = {SocialConfigToml.Quote(lastCheck.UtcDateTime.ToString(TimestampFormat, CultureInfo.InvariantCulture))}");
-        sb.AppendLine($"panel_enabled = {Bool(settings.PanelEnabled)}");
         sb.AppendLine($"panel_width_percent = {Math.Clamp(settings.PanelWidthPercent, AppSettings.PanelWidthPercentMin, AppSettings.PanelWidthPercentMax)}");
         sb.AppendLine($"panel_text_size = {Math.Clamp(settings.PanelTextSize, AppSettings.PanelTextSizeMin, AppSettings.PanelTextSizeMax)}");
         sb.AppendLine($"panel_right_gap_percent = {Math.Clamp(settings.PanelRightGapPercent, AppSettings.PanelRightGapPercentMin, AppSettings.PanelRightGapPercentMax)}");
         sb.AppendLine($"panel_top_gap_percent = {Math.Clamp(settings.PanelTopGapPercent, AppSettings.PanelTopGapPercentMin, AppSettings.PanelTopGapPercentMax)}");
         sb.AppendLine($"panel_org_display = {SocialConfigToml.Quote(OrgDisplayText(settings.PanelOrgDisplay))}");
         sb.AppendLine($"panel_main_org_only = {Bool(settings.PanelMainOrgOnly)}");
+        sb.AppendLine($"dossier_width_percent = {Math.Clamp(settings.DossierWidthPercent, AppSettings.DossierWidthPercentMin, AppSettings.DossierWidthPercentMax)}");
         sb.AppendLine($"boundary_top = {ClampBoundary(settings.BoundaryTop)}");
         sb.AppendLine($"boundary_bottom = {ClampBoundary(settings.BoundaryBottom)}");
         sb.AppendLine($"boundary_left = {ClampBoundary(settings.BoundaryLeft)}");
         sb.AppendLine($"boundary_right = {ClampBoundary(settings.BoundaryRight)}");
         sb.AppendLine($"nameplate_tracking_fps = {WriteTrackingFps(settings.NameplateTrackingFps)}");
+        sb.AppendLine($"tracking_loss_display_seconds = {SnapLossSeconds(settings.TrackingLossDisplaySeconds)}");
         sb.AppendLine($"capture_method = {SocialConfigToml.Quote(CaptureMethodText(settings.CaptureMethod))}");
         sb.AppendLine($"overlay_visible_in_capture = {Bool(settings.OverlayVisibleInCapture)}");
         sb.AppendLine($"hide_capture_border = {Bool(settings.HideCaptureBorder)}");
@@ -72,16 +77,26 @@ public static class AppSettingsToml
         sb.AppendLine($"settings_dark_mode = {SocialConfigToml.Quote(DarkModeText(settings.SettingsDarkMode))}");
         sb.AppendLine($"overlay_disabled = {Bool(settings.OverlayDisabled)}");
         sb.AppendLine($"hotkey_toggle_overlay = {SocialConfigToml.Quote(HotkeyText.Normalize(settings.HotkeyToggleOverlay))}");
-        sb.AppendLine($"hotkey_toggle_panel = {SocialConfigToml.Quote(HotkeyText.Normalize(settings.HotkeyTogglePanel))}");
         sb.AppendLine($"hotkey_timed_overlay = {SocialConfigToml.Quote(HotkeyText.Normalize(settings.HotkeyTimedOverlay))}");
+        sb.AppendLine($"hotkey_interactive_overlay = {SocialConfigToml.Quote(HotkeyText.Normalize(settings.HotkeyInteractiveOverlay))}");
         sb.AppendLine($"timed_overlay_seconds = {Math.Clamp(settings.TimedOverlaySeconds, AppSettings.TimedOverlaySecondsMin, AppSettings.TimedOverlaySecondsMax)}");
         sb.AppendLine($"mining_disabled = {Bool(settings.MiningDisabled)}");
+        sb.AppendLine($"mining_label_zoom_percent = {SnapZoom(settings.MiningLabelZoomPercent)}");
         return sb.ToString();
     }
 
     private static string Bool(bool value) => value ? "true" : "false";
 
     public static string CaptureMethodText(CaptureMethod method) => method == CaptureMethod.WindowCapture ? "wgc" : "desktop_duplication";
+
+    public static readonly IReadOnlyList<ImportMode> ImportModes = new[] { ImportMode.Merge, ImportMode.MergeImportedWins, ImportMode.BackupExisting };
+
+    public static string ImportModeText(ImportMode mode) => mode switch
+    {
+        ImportMode.Merge => "merge_local",
+        ImportMode.MergeImportedWins => "merge_imported",
+        _ => "backup",
+    };
 
     public static string OrgDisplayText(OrgDisplay display) => display == OrgDisplay.Sid ? "sid" : "name";
 
@@ -152,7 +167,7 @@ public static class AppSettingsToml
         }
 
         foreach (var key in root.Keys)
-            if (!KnownKeys.Contains(key))
+            if (!KnownKeys.Contains(key) && !RetiredKeys.Contains(key))
                 warnings.Add($"{key}: unknown setting, ignored.");
 
         if (errors.Count > 0)
@@ -241,9 +256,10 @@ public static class AppSettingsToml
             }
         }
 
-        var panelEnabled = ReadBool(root, "panel_enabled", defaults.PanelEnabled, warnings);
         var panelWidth = ReadInt(root, "panel_width_percent", defaults.PanelWidthPercent,
             AppSettings.PanelWidthPercentMin, AppSettings.PanelWidthPercentMax, warnings);
+        var dossierWidth = ReadInt(root, "dossier_width_percent", defaults.DossierWidthPercent,
+            AppSettings.DossierWidthPercentMin, AppSettings.DossierWidthPercentMax, warnings);
         var panelText = ReadInt(root, "panel_text_size", defaults.PanelTextSize,
             AppSettings.PanelTextSizeMin, AppSettings.PanelTextSizeMax, warnings);
         var panelRightGap = ReadInt(root, "panel_right_gap_percent", defaults.PanelRightGapPercent,
@@ -257,6 +273,8 @@ public static class AppSettingsToml
         var boundaryRight = ReadInt(root, "boundary_right", defaults.BoundaryRight, AppSettings.BoundaryPercentMin, AppSettings.BoundaryPercentMax, warnings);
 
         var trackingFps = ReadTrackingFps(root, defaults.NameplateTrackingFps, warnings);
+        var lossSeconds = SnapLossSeconds(ReadInt(root, "tracking_loss_display_seconds", defaults.TrackingLossDisplaySeconds,
+            AppSettings.TrackingLossSecondsMin, AppSettings.TrackingLossSecondsMax, warnings));
 
         var captureMethod = ReadCaptureMethod(root, defaults.CaptureMethod, warnings);
         var visibleInCapture = ReadBool(root, "overlay_visible_in_capture", defaults.OverlayVisibleInCapture, warnings);
@@ -266,33 +284,39 @@ public static class AppSettingsToml
         var darkMode = ReadDarkMode(root, defaults.SettingsDarkMode, warnings);
         var overlayDisabled = ReadBool(root, "overlay_disabled", defaults.OverlayDisabled, warnings);
         var hotkeyOverlay = ReadHotkey(root, "hotkey_toggle_overlay", defaults.HotkeyToggleOverlay, warnings);
-        var hotkeyPanel = ReadHotkey(root, "hotkey_toggle_panel", defaults.HotkeyTogglePanel, warnings);
         var hotkeyTimed = ReadHotkey(root, "hotkey_timed_overlay", defaults.HotkeyTimedOverlay, warnings);
+        var hotkeyInteractive = ReadHotkey(root, "hotkey_interactive_overlay", defaults.HotkeyInteractiveOverlay, warnings);
         var timedSeconds = ReadTimedSeconds(root, defaults.TimedOverlaySeconds, warnings);
         var miningDisabled = ReadBool(root, "mining_disabled", defaults.MiningDisabled, warnings);
+        var miningZoom = SnapZoom(ReadInt(root, "mining_label_zoom_percent", defaults.MiningLabelZoomPercent,
+            AppSettings.MiningLabelZoomPercentMin, AppSettings.MiningLabelZoomPercentMax, warnings));
         var orgDisplay = ReadOrgDisplay(root, defaults.PanelOrgDisplay, warnings);
         var mainOrgOnly = ReadBool(root, "panel_main_org_only", defaults.PanelMainOrgOnly, warnings);
+        var importMode = ReadImportMode(root, defaults.ImportMode, warnings);
 
         var settings = new AppSettings
         {
             OverlayDisabled = overlayDisabled,
             HotkeyToggleOverlay = hotkeyOverlay,
-            HotkeyTogglePanel = hotkeyPanel,
             HotkeyTimedOverlay = hotkeyTimed,
+            HotkeyInteractiveOverlay = hotkeyInteractive,
             TimedOverlaySeconds = timedSeconds,
             MiningDisabled = miningDisabled,
-            PanelEnabled = panelEnabled,
+            MiningLabelZoomPercent = miningZoom,
             PanelWidthPercent = panelWidth,
             PanelTextSize = panelText,
             PanelRightGapPercent = panelRightGap,
             PanelTopGapPercent = panelTopGap,
             PanelOrgDisplay = orgDisplay,
             PanelMainOrgOnly = mainOrgOnly,
+            DossierWidthPercent = dossierWidth,
+            ImportMode = importMode,
             BoundaryTop = boundaryTop,
             BoundaryBottom = boundaryBottom,
             BoundaryLeft = boundaryLeft,
             BoundaryRight = boundaryRight,
             NameplateTrackingFps = trackingFps,
+            TrackingLossDisplaySeconds = lossSeconds,
             CaptureMethod = captureMethod,
             OverlayVisibleInCapture = visibleInCapture,
             HideCaptureBorder = hideBorder,
@@ -349,6 +373,20 @@ public static class AppSettingsToml
         return fallback;
     }
 
+    private static int SnapZoom(int percent)
+    {
+        var step = AppSettings.MiningLabelZoomPercentStep;
+        var snapped = (int)Math.Round(percent / (double)step, MidpointRounding.AwayFromZero) * step;
+        return Math.Clamp(snapped, AppSettings.MiningLabelZoomPercentMin, AppSettings.MiningLabelZoomPercentMax);
+    }
+
+    internal static int SnapLossSeconds(int seconds)
+    {
+        var step = AppSettings.TrackingLossSecondsStep;
+        var snapped = (int)Math.Round(seconds / (double)step, MidpointRounding.AwayFromZero) * step;
+        return Math.Clamp(snapped, AppSettings.TrackingLossSecondsMin, AppSettings.TrackingLossSecondsMax);
+    }
+
     private static int ReadInt(TomlTable root, string key, int fallback, int min, int max, List<string> warnings)
     {
         if (!root.TryGetValue(key, out var raw))
@@ -401,6 +439,24 @@ public static class AppSettingsToml
         if (raw is long value && AppSettings.SettingsWindowScales.Any(v => v == value))
             return (int)value;
         warnings.Add($"{Key}: must be one of {string.Join(", ", AppSettings.SettingsWindowScales)}; using {fallback.ToString(CultureInfo.InvariantCulture)}.");
+        return fallback;
+    }
+
+    private static ImportMode ReadImportMode(TomlTable root, ImportMode fallback, List<string> warnings)
+    {
+        const string Key = "import_mode";
+        if (!root.TryGetValue(Key, out var raw))
+            return fallback;
+        if (raw is string text)
+        {
+            foreach (var mode in ImportModes)
+            {
+                if (text.Trim().Equals(ImportModeText(mode), StringComparison.OrdinalIgnoreCase))
+                    return mode;
+            }
+        }
+
+        warnings.Add($"{Key}: must be \"merge_local\", \"merge_imported\" or \"backup\"; using \"{ImportModeText(fallback)}\".");
         return fallback;
     }
 
@@ -482,7 +538,11 @@ public static class AppSettingsToml
         if (text.Trim().Length == 0)
             return string.Empty;
         if (HotkeyText.TryParse(text, out var hotkey, out var problem))
-            return HotkeyText.Format(hotkey!);
+        {
+            if (HotkeyText.EscapeProblem(hotkey!) is not { } escape)
+                return HotkeyText.Format(hotkey!);
+            problem = escape;
+        }
         warnings.Add($"{key}: {problem} {char.ToUpperInvariant(fallbackText[0])}{fallbackText[1..]}.");
         return fallback;
     }

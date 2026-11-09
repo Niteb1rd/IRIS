@@ -6,6 +6,11 @@ public static class OrgRuleValues
 {
     public static bool NeedsValue(AttributeKind kind) => kind is AttributeKind.Archetype or AttributeKind.Activity;
 
+    public static string RuleKey(AttributeKind kind, string? value) =>
+        kind + "|" + (NeedsValue(kind) ? (value ?? string.Empty).Trim() : string.Empty);
+
+    public static string RuleKey(OrgAttributeRule rule) => RuleKey(rule.Kind, rule.Value);
+
     public static IReadOnlyList<string> VocabularyFor(AttributeKind kind) => kind switch
     {
         AttributeKind.Archetype => OrgVocabulary.Archetypes,

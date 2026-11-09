@@ -36,12 +36,6 @@ public static class PanelLayout
     {
         if (windowWidth <= 0 || windowHeight <= 0)
             return PanelLayoutResult.Empty;
-        if (!settings.PanelEnabled)
-        {
-            entries = Array.Empty<PanelEntry>();
-            note = null;
-        }
-
         if (entries.Count == 0 && note is null && toast is null)
             return PanelLayoutResult.Empty;
 
@@ -87,6 +81,8 @@ public static class PanelLayout
         for (var i = 0; i < entries.Count; i++)
         {
             orgLines[i] = PanelText.Lines(entries[i].Orgs, settings.PanelOrgDisplay, settings.PanelMainOrgOnly, perLine);
+            if (entries[i].Note is { Length: > 0 } entryNote)
+                orgLines[i] = orgLines[i].Append(PanelText.NotesLine(entryNote, perLine)).ToList();
             tops[i + 1] = tops[i] + EntryHeight(orgLines[i].Count, lineHeight, paddingY) + gap;
         }
 

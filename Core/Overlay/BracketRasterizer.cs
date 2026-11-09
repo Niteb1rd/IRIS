@@ -3,7 +3,7 @@ namespace Iris.Core.Overlay;
 
 public sealed class BracketRasterizer
 {
-    public const float Opacity = 0.5f;
+    public const float Opacity = 0.6f;
 
     private const int CurveSteps = 8;
     private const float DarkAlpha = 0xE6 / 255f * Opacity;

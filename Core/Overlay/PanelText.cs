@@ -10,6 +10,14 @@ public sealed record PanelOrgs(IReadOnlyList<OrgMembership>? Orgs, ColorMatch? M
 
 public static class PanelText
 {
+    public const string NotesPrefix = "Notes: ";
+
+    public static string NotesLine(string note, int charsPerLine)
+    {
+        var text = NotesPrefix + note.Trim();
+        return text.Length <= charsPerLine ? text : text.Substring(0, Math.Max(NotesPrefix.Length, charsPerLine - 2)) + "..";
+    }
+
     public const int MaxLines = 2;
     public const int NameMaxLength = 20;
     public const int NameCutLength = 18;

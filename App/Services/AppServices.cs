@@ -47,6 +47,8 @@ public sealed partial class AppServices : IDisposable
         SettingsLoad = settingsStartup.Load;
         Settings = settingsStartup.Load.Settings;
 
+        FixColorRanks(listStartup);
+
         if (listStartup.MainFileHasErrors)
         {
             var note = listStartup.UsedLastGood
@@ -129,6 +131,27 @@ public sealed partial class AppServices : IDisposable
 
     public SocialListLoadResult ListLoad { get; private set; }
 
+    public bool ColorRanksFixedAtStartup { get; private set; }
+
+    public const string ColorRanksFixedText =
+        "Color ranks were updated: each color now has one rank, and when several match, the higher rank wins. "
+        + "See the changes in Settings > Orgs / Org-Attribute. Your previous list was saved as Config\\social-config.bak.txt.";
+
+    private void FixColorRanks(SocialListStartup startup)
+    {
+        if (startup.MainFileHasErrors || startup.Load.IsNew || !startup.Load.IsValid)
+            return;
+        var ranks = ColorRanks.Normalize(CurrentConfig);
+        CurrentConfig = ranks.Config;
+        if (!ranks.Fixed)
+            return;
+        var saved = SocialListStore.Save(Paths.SocialListFile, ranks.Config, ListFile);
+        ColorRanksFixedAtStartup = saved.Success;
+        Log.Write(Clock.UtcNow, saved.Success
+            ? $"{DataPaths.SocialListFileName}: color ranks fixed (one rank per color) and saved; the previous file is kept as the .bak copy"
+            : $"{DataPaths.SocialListFileName}: color ranks fixed in memory, but the file could not be saved: {saved.Error}");
+    }
+
     public SocialConfig CurrentConfig { get; private set; }
 
     public bool IsOverlayDisabled => Settings.OverlayDisabled && !_timedOverlayOn;
@@ -158,7 +181,8 @@ public sealed partial class AppServices : IDisposable
         fileLog.Enabled = settingsLoad.Settings.SessionLogEnabled;
         fileLog.WriteBlankLine(clock.UtcNow);
         log.Write(clock.UtcNow, "IRIS " + AppVersion.Text + " started");
-        log.Write(clock.UtcNow, "IRIS folder: " + paths.ProgramFolder);
+        if (AppVersion.Diagnostics)
+            log.Write(clock.UtcNow, "IRIS folder: " + paths.ProgramFolder);
         if (NativeLibraries.Loaded.Count > 0)
             log.Write(clock.UtcNow, "Native libraries loaded from the Data folder: " + string.Join(", ", NativeLibraries.Loaded));
 

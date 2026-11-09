@@ -52,6 +52,10 @@ public sealed class IndexSnapshot
 
     public bool BlankPictureNote { get; init; }
 
+    public AberrationState Aberration { get; init; }
+
+    public bool AberrationNote { get; init; }
+
     public Iris.Core.Mining.MiningState? Mining { get; init; }
 
     public double? LoopIntervalMs => double.IsNaN(PrevTrackedFrameMs) || double.IsNegativeInfinity(TrackedFrameMs) ? null : TrackedFrameMs - PrevTrackedFrameMs;

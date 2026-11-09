@@ -167,8 +167,12 @@ public sealed partial class CacheDatabase : IDisposable
                     + "It was probably written by a newer IRIS. Update IRIS or delete the cache file (cache.db, and cache.db-wal / cache.db-shm next to it if they are there).");
             if (version == CurrentSchemaVersion)
             {
-                if (!HasColumn("player_orgs", "name"))
-                    InTransaction(() => Execute(PlayerOrgNameColumn));
+                InTransaction(() =>
+                {
+                    if (!HasColumn("player_orgs", "name"))
+                        Execute(PlayerOrgNameColumn);
+                    Execute(PlayerExtraTable);
+                });
                 return;
             }
 
@@ -185,6 +189,7 @@ public sealed partial class CacheDatabase : IDisposable
                         Execute(statement);
                 if (!HasColumn("player_orgs", "name"))
                     Execute(PlayerOrgNameColumn);
+                Execute(PlayerExtraTable);
                 Execute("PRAGMA user_version = " + CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture));
             });
         }

@@ -11,6 +11,8 @@ public enum ImportMode
     Merge,
 
     Replace,
+
+    MergeImportedWins,
 }
 
 public sealed class ImportResult
@@ -37,19 +39,32 @@ public sealed class ImportResult
 
     public string? BackupPath { get; private init; }
 
+    public bool RanksFixed { get; private init; }
+
+    public const string RanksFixedNote = "Color ranks were updated: see Settings > Orgs / Org-Attribute.";
+
     public string Summary
     {
         get
         {
             if (!Success)
                 return Error ?? "Import failed.";
+            return CountsText + (RanksFixed ? " " + RanksFixedNote : string.Empty);
+        }
+    }
 
+    private string CountsText
+    {
+        get
+        {
             var counts = $"{Count(PlayersAdded, "player")}, {Count(OrgsAdded, "org")}, {Count(RulesAdded, "rule")}";
             if (!HadExistingFile || Mode == ImportMode.BackupExisting)
                 return "Imported: " + counts
                     + (BackupPath is null ? string.Empty : " (old file kept as " + Path.GetFileName(BackupPath) + ")");
             if (Mode == ImportMode.Replace)
                 return "Imported: " + counts + " (your lists were replaced)";
+            if (Mode == ImportMode.MergeImportedWins)
+                return "Imported: " + counts + " added" + (DuplicatesSkipped > 0 ? $", {Count(DuplicatesSkipped, "row")} updated" : string.Empty);
             return "Imported: " + counts + " added" + (DuplicatesSkipped > 0 ? $", {Count(DuplicatesSkipped, "duplicate")} skipped" : string.Empty);
         }
     }
@@ -57,6 +72,13 @@ public sealed class ImportResult
     private static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n} {noun}s";
 
     internal static ImportResult Fail(ImportMode mode, string error) => new() { Success = false, Error = error, Mode = mode };
+
+    internal ImportResult WithRanksFixed(bool fixedRanks) => fixedRanks ? new()
+    {
+        Success = Success, Error = Error, Mode = Mode, HadExistingFile = HadExistingFile, Config = Config,
+        PlayersAdded = PlayersAdded, OrgsAdded = OrgsAdded, RulesAdded = RulesAdded, DuplicatesSkipped = DuplicatesSkipped, BackupPath = BackupPath,
+        RanksFixed = Success,
+    } : this;
 
     internal static ImportResult Done(
         ImportMode mode, bool hadExisting, SocialConfig config, int players, int orgs, int rules, int skipped, string? backupPath) =>
@@ -96,7 +118,12 @@ public static class ConfigImporter
 
     public static ImportResult Import(string listFilePath, SocialConfig imported, ImportMode mode, IClock clock, WatchedFile? watched = null)
     {
-        imported = NoMatchRule.Normalized(imported);
+        var ranks = ColorRanks.Normalize(NoMatchRule.Normalized(imported));
+        return ImportCore(listFilePath, ranks.Config, mode, clock, watched).WithRanksFixed(ranks.Fixed);
+    }
+
+    private static ImportResult ImportCore(string listFilePath, SocialConfig imported, ImportMode mode, IClock clock, WatchedFile? watched)
+    {
 
         if (!File.Exists(listFilePath))
         {
@@ -117,16 +144,23 @@ public static class ConfigImporter
             }
 
             case ImportMode.Merge:
+            case ImportMode.MergeImportedWins:
             {
                 var current = SocialListStore.Load(listFilePath);
                 if (!current.IsValid)
                     return ImportResult.Fail(mode,
-                        "Your current list file has problems, so it cannot be merged safely. Choose \"Backup existing config\" or \"Replace existing config\" instead.");
+                        "Your current list file has problems, so it cannot be merged safely. Choose \"Replace, Backup Local Config\" in Settings > Shared Config instead.");
 
-                var merged = SocialConfigMerger.Merge(current.Config, imported);
-                var saved = SocialListStore.Save(listFilePath, merged.Config, watched);
+                var importedWins = mode == ImportMode.MergeImportedWins;
+                var local = ColorRanks.Normalize(current.Config).Config;
+                var merged = SocialConfigMerger.Merge(local, imported, importedWins);
+                var (first, second) = importedWins ? (imported, local) : (local, imported);
+                var config = ColorRanks.WithRankings(merged.Config,
+                    ColorRanks.Combine(ColorRanks.OrgRanking(first), ColorRanks.OrgRanking(second)),
+                    ColorRanks.Combine(ColorRanks.RuleRanking(first), ColorRanks.RuleRanking(second)));
+                var saved = SocialListStore.Save(listFilePath, config, watched);
                 return saved.Success
-                    ? ImportResult.Done(mode, true, merged.Config, merged.AddedPlayers, merged.AddedOrgs, merged.AddedRules, merged.SkippedDuplicates, null)
+                    ? ImportResult.Done(mode, true, config, merged.AddedPlayers, merged.AddedOrgs, merged.AddedRules, merged.SkippedDuplicates, null)
                     : ImportResult.Fail(mode, saved.Error ?? "The merged config could not be saved.");
             }
 

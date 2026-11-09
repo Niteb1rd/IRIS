@@ -16,7 +16,7 @@ public sealed record CaptureGate(bool Active, PixelRect Bounds, IntPtr Handle = 
     public static readonly CaptureGate Off = new(false, default);
 }
 
-public sealed class OverlayController : IDisposable
+public sealed partial class OverlayController : IDisposable
 {
     public const int TestSeconds = 15;
     public const double ToastSeconds = 2;
@@ -101,6 +101,20 @@ public sealed class OverlayController : IDisposable
 
     public event EventHandler? GateChanged;
 
+    public event EventHandler? InteractiveRequested;
+
+    public GameWindowSnapshot GameWindow => _tracker.Current;
+
+    public MarkerIndex? LiveIndex => _index;
+
+    public void ShowNotice(string text)
+    {
+        if (_disposed || _tracker.Current.State != GameWindowState.Ready)
+            return;
+        ShowToast(text);
+        Evaluate();
+    }
+
     public void Start()
     {
         Hotkeys.Apply(_services.Settings);
@@ -134,7 +148,7 @@ public sealed class OverlayController : IDisposable
         var nowMs = StopwatchClock.Shared.NowMs;
         if (renderLoop)
             NotePickup(index, snapshot, nowMs);
-        return IndexModel.ModelAt(snapshot, nowMs + refreshPeriodMs, _pipeSettings, _liveSettings, previous);
+        return IndexModel.ModelAt(snapshot, nowMs + refreshPeriodMs, _pipeSettings, _liveSettings, previous, _services.Settings.TrackingLossDisplaySeconds * 1000.0);
     }
 
     private void TraceModel(OverlayModel model, double refreshPeriodMs)
@@ -202,191 +216,42 @@ public sealed class OverlayController : IDisposable
         return model;
     }
 
-    public void ToggleFromTray(HotkeyAction action) => Toggle(action, announce: false);
+    public void ToggleFromTray() => ToggleOverlay(announce: false);
 
     private void OnHotkeyPressed(object? sender, HotkeyAction action)
     {
+        if (action == HotkeyAction.InteractiveOverlay)
+        {
+            InteractiveRequested?.Invoke(this, EventArgs.Empty);
+            return;
+        }
         if (action == HotkeyAction.TimedOverlay)
             PressTimedOverlay();
-        else
-            Toggle(action, announce: true);
+        else if (action == HotkeyAction.ToggleOverlay)
+            ToggleOverlay(announce: true);
     }
 
-    private void PressTimedOverlay()
-    {
-        var settings = _services.Settings;
-        var press = _timedRun.Press(settings.OverlayDisabled, settings.TimedOverlaySeconds, Environment.TickCount64);
-        if (press == TimedOverlayPress.Ignored)
-            return;
-
-        _toastText = null;
-        _toastTimer.Stop();
-        _timedShownSeconds = -1;
-        _timedTimer.Stop();
-        _timedTimer.Start();
-        if (press == TimedOverlayPress.Started)
-        {
-            _services.Log.Write(_services.Clock.UtcNow, $"Overlay on for {settings.TimedOverlaySeconds} seconds (hotkey; not saved)");
-            _services.SetTimedOverlay(true);
-        }
-        Evaluate();
-    }
-
-    private void OnTimedTick(object? sender, EventArgs e)
-    {
-        var now = Environment.TickCount64;
-        if (_timedRun.Expire(now))
-        {
-            EndTimedRun(expired: true);
-            return;
-        }
-
-        var left = _timedRun.SecondsLeft(now);
-        if (left != _timedShownSeconds)
-            Evaluate();
-    }
-
-    private void EndTimedRun(bool expired)
-    {
-        _timedRun.Stop();
-        _timedTimer.Stop();
-        _timedShownSeconds = -1;
-        if (!_services.IsTimedOverlayOn)
-            return;
-        _services.Log.Write(_services.Clock.UtcNow, expired ? "Timed overlay ended (overlay off again)" : "Timed overlay ended (overlay now on)");
-        if (expired && _services.Settings.OverlayDisabled && _testModel is null && _tracker.Current.State == GameWindowState.Ready)
-            ShowToast("Overlay OFF");
-        _services.SetTimedOverlay(false);
-        Evaluate();
-    }
-
-    private string? TimedOverlayText()
-    {
-        if (!_timedRun.IsActive)
-            return null;
-        _timedShownSeconds = _timedRun.SecondsLeft(Environment.TickCount64);
-        return TimedOverlayRun.CountdownText(_timedShownSeconds);
-    }
-
-    private void Toggle(HotkeyAction action, bool announce)
+    private void ToggleOverlay(bool announce)
     {
         _toastText = null;
         _toastTimer.Stop();
 
-        var settings = _services.Settings;
-        string text;
         var onScreen = announce && _testModel is null && _tracker.Current.State == GameWindowState.Ready;
-
-        if (action == HotkeyAction.ToggleOverlay)
+        var disable = !_services.Settings.OverlayDisabled;
+        var text = disable ? "Overlay OFF" : "Overlay ON";
+        if (onScreen)
+            ShowToast(text);
+        var saved = _services.SetOverlayDisabled(disable);
+        if (!saved.Success)
         {
-            var disable = !settings.OverlayDisabled;
-            text = disable ? "Overlay OFF" : "Overlay ON";
-            if (onScreen)
-                ShowToast(text);
-            var saved = _services.SetOverlayDisabled(disable);
-            if (!saved.Success)
-            {
-                ClearToast();
-                _services.Log.Write(_services.Clock.UtcNow, "Could not save the setting: " + saved.Error);
-                return;
-            }
-            if (!disable)
-                EndTimedRun(expired: false);
-        }
-        else
-        {
-            var enable = !settings.PanelEnabled;
-            text = enable ? "Info panel ON" : "Info panel OFF";
-            if (onScreen)
-                ShowToast(text);
-            var saved = _services.SetPanelEnabled(enable);
-            if (!saved.Success)
-            {
-                ClearToast();
-                _services.Log.Write(_services.Clock.UtcNow, "Could not save the setting: " + saved.Error);
-                return;
-            }
-        }
-
-        Evaluate();
-    }
-
-    private void ShowToast(string text)
-    {
-        _toastText = text;
-        _toastTimer.Stop();
-        _toastTimer.Start();
-    }
-
-    private void ClearToast()
-    {
-        _toastText = null;
-        _toastTimer.Stop();
-        Evaluate();
-    }
-
-    private void OnToastTick(object? sender, EventArgs e) => ClearToast();
-
-    public string StartTest(AppSettings settings, Window anchor, TestOverlayPart part)
-    {
-        TestPart = part;
-        string where;
-        if (_tracker.TryFindGameWindow(out var gameBounds))
-        {
-            _testBounds = gameBounds;
-            where = "over the Star Citizen window";
-        }
-        else
-        {
-            var handle = new WindowInteropHelper(anchor).Handle;
-            if (!NativeMethods.TryGetMonitorBounds(handle, out var monitorBounds))
-                throw new InvalidOperationException("Windows did not report the size of the screen.");
-            _testBounds = monitorBounds;
-            where = "over this screen (Star Citizen is not running)";
-        }
-
-        _testModel = BuildTestModel(settings);
-        _testSettings = settings;
-        _testEndTick = Environment.TickCount64 + TestSeconds * 1000L;
-        _testTimer.Start();
-        _services.Log.Write(_services.Clock.UtcNow, $"Test overlay started {where} ({_testBounds.Width}x{_testBounds.Height})");
-
-        Evaluate();
-        TestStateChanged?.Invoke(this, EventArgs.Empty);
-        return where;
-    }
-
-    public void StopTest()
-    {
-        if (_testModel is null)
+            ClearToast();
+            _services.Log.Write(_services.Clock.UtcNow, "Could not save the setting: " + saved.Error);
             return;
-        _testModel = null;
-        _testSettings = null;
-        _testTimer.Stop();
-        _services.Log.Write(_services.Clock.UtcNow, "Test overlay ended");
+        }
+        if (!disable)
+            EndTimedRun(expired: false);
 
         Evaluate();
-        TestStateChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    public void UpdateTestSettings(AppSettings settings)
-    {
-        if (_testModel is null)
-            return;
-        _testSettings = settings;
-        _testModel = BuildTestModel(settings);
-        Evaluate();
-    }
-
-    private OverlayModel BuildTestModel(AppSettings settings) =>
-        TestOverlayBuilder.Build(_services.CurrentConfig, _testBounds.Width, _testBounds.Height, TrackingBoundary.From(settings), TestPart);
-
-    private void OnTestTick(object? sender, EventArgs e)
-    {
-        if (TestSecondsLeft <= 0)
-            StopTest();
-        else
-            TestStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void OnGameWindowChanged(object? sender, GameWindowSnapshot snapshot) => Evaluate();
@@ -408,6 +273,15 @@ public sealed class OverlayController : IDisposable
 
     public void CloseBorderlessNotice() => PromptDialog.CloseNotice();
 
+    public GameWindowSnapshot CheckGameWindowNow() => _tracker.CheckWithModeNow();
+
+    public void ShowBorderlessNoticeNow(WindowMode? gameMode)
+    {
+        if (_disposed || _imports.IsQuitting || PromptDialog.IsAnyOpen)
+            return;
+        ShowBorderlessNotice(gameMode);
+    }
+
     private void OnSettingsApplied(object? sender, EventArgs e)
     {
         var dispatcher = _testTimer.Dispatcher;
@@ -426,8 +300,6 @@ public sealed class OverlayController : IDisposable
         foreach (var window in new[] { _testWindow, _panelWindow, _miningWindow })
             window?.SetVisibleInCapture(visibleInCapture);
         _bracketRenderer?.SetVisibleInCapture(visibleInCapture);
-        if (_testSettings is not null)
-            _testSettings = _testSettings with { PanelEnabled = _services.Settings.PanelEnabled };
         if (_timedRun.IsActive && !_services.Settings.OverlayDisabled)
             EndTimedRun(expired: false);
         Evaluate();
@@ -482,15 +354,33 @@ public sealed class OverlayController : IDisposable
         else
             _bracketRenderer?.Hide();
 
-        if (toast is not null || (settings.PanelEnabled && (liveModel.Panel.Count > 0 || liveModel.Note is not null)))
-            EnsurePanelWindow().Present(liveModel, snapshot.Bounds, settings, toast);
+        if (toast is not null || liveModel.Note is not null || liveModel.Panel.Count > 0)
+            EnsurePanelWindow().Present(WithNotes(liveModel), snapshot.Bounds, settings, toast);
         else
             _panelWindow?.HideOverlay();
 
-        if (settings.PanelEnabled && liveModel.Mining is not null)
+        if (liveModel.Mining is not null)
             EnsureMiningWindow().Present(liveModel, snapshot.Bounds, settings);
         else
             _miningWindow?.HideOverlay();
+    }
+
+    private OverlayModel WithNotes(OverlayModel model)
+    {
+        if (model.Panel.Count == 0)
+            return model;
+        var notes = _services.Notes;
+        PanelEntry[]? changed = null;
+        for (int i = 0; i < model.Panel.Count; i++)
+        {
+            var entry = model.Panel[i];
+            var note = notes.PanelText(entry.Handle);
+            if (note == entry.Note)
+                continue;
+            changed ??= System.Linq.Enumerable.ToArray(model.Panel);
+            changed[i] = entry with { Note = note };
+        }
+        return changed is null ? model : new OverlayModel(model.Brackets, changed, model.Boundary, model.Note, model.Mining);
     }
 
     private void SetGate(CaptureGate gate)

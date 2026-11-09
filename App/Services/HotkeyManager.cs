@@ -12,8 +12,8 @@ namespace Iris.App.Services;
 public enum HotkeyAction
 {
     ToggleOverlay,
-    TogglePanel,
     TimedOverlay,
+    InteractiveOverlay,
 }
 
 public sealed class HotkeyManager : IDisposable
@@ -35,21 +35,21 @@ public sealed class HotkeyManager : IDisposable
         Failed,
     }
 
-    private static readonly HotkeyAction[] Actions = { HotkeyAction.ToggleOverlay, HotkeyAction.TogglePanel, HotkeyAction.TimedOverlay };
+    private static readonly HotkeyAction[] Actions = { HotkeyAction.ToggleOverlay, HotkeyAction.TimedOverlay, HotkeyAction.InteractiveOverlay };
 
     public static string NameOf(HotkeyAction action) => action switch
     {
-        HotkeyAction.ToggleOverlay => "Toggle Overlay",
-        HotkeyAction.TogglePanel => "Toggle Info Panel",
-        HotkeyAction.TimedOverlay => "Activate Overlay for X Seconds",
+        HotkeyAction.ToggleOverlay => "Toggle IRIS On/Off",
+        HotkeyAction.TimedOverlay => "Activate IRIS for X Seconds",
+        HotkeyAction.InteractiveOverlay => "Toggle Interactive Overlay",
         _ => action.ToString(),
     };
 
     public static string TextOf(AppSettings settings, HotkeyAction action) => HotkeyText.Normalize(action switch
     {
         HotkeyAction.ToggleOverlay => settings.HotkeyToggleOverlay,
-        HotkeyAction.TogglePanel => settings.HotkeyTogglePanel,
         HotkeyAction.TimedOverlay => settings.HotkeyTimedOverlay,
+        HotkeyAction.InteractiveOverlay => settings.HotkeyInteractiveOverlay,
         _ => string.Empty,
     });
 
@@ -73,7 +73,7 @@ public sealed class HotkeyManager : IDisposable
     private readonly NativeMethods.LowLevelKeyboardProc _callback;
 
     private HookSession? _session;
-    private readonly string[] _texts = { string.Empty, string.Empty, string.Empty };
+    private readonly string[] _texts = Enumerable.Repeat(string.Empty, Actions.Length).ToArray();
     private readonly string?[] _errors = new string?[Actions.Length];
     private bool _applied;
     private volatile bool _disposed;

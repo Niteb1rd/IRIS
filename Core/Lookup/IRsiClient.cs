@@ -6,5 +6,7 @@ public interface IRsiClient
 
     Task<RsiResult<OrgInfo>> GetOrgInfoAsync(string sid, CancellationToken ct = default);
 
+    Task<RsiResult<PlayerProfile>> GetPlayerProfileAsync(string handle, CancellationToken ct = default);
+
     Task<RsiResult<OrgMembers>> GetOrgMembersAsync(string sid, CancellationToken ct = default);
 }

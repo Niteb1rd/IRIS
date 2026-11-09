@@ -43,6 +43,8 @@ public sealed class OverlayPainter
 
     public OverlayLayer Layer { get; set; } = OverlayLayer.All;
 
+    public double MiningScale { get; set; } = 1.0;
+
     public void SetContent(OverlayModel model, PanelLayoutResult panel, PixelRect origin, double screenHeight)
     {
         _model = model;
@@ -63,7 +65,8 @@ public sealed class OverlayPainter
         var drawBrackets = Layer != OverlayLayer.Panel && _model.Brackets.Count > 0;
         var drawPanel = Layer != OverlayLayer.Brackets && !_panel.IsEmpty;
         var boundary = Layer == OverlayLayer.All ? _model.Boundary : null;
-        if (!drawBrackets && !drawPanel && boundary is null)
+        var dossier = Layer == OverlayLayer.All ? _model.Dossier : null;
+        if (!drawBrackets && !drawPanel && boundary is null && dossier is null)
             return;
 
         var shift = new TranslateTransform(-_origin.X, -_origin.Y);
@@ -73,6 +76,9 @@ public sealed class OverlayPainter
         {
             if (boundary is { } area)
                 DrawBoundary(dc, area, _screenHeight);
+
+            if (dossier is { } place)
+                DrawDossier(dc, place, _panel, _screenHeight);
 
             if (drawBrackets)
             {
@@ -98,6 +104,22 @@ public sealed class OverlayPainter
         var rect = new Rect(area.X + inset, area.Y + inset, Math.Max(0.0, area.Width - 2 * inset), Math.Max(0.0, area.Height - 2 * inset));
         dc.DrawRectangle(null, RoundPen(DarkBrush, stroke + 2.0), rect);
         dc.DrawRectangle(null, RoundPen(BoundaryBrush, stroke), rect);
+    }
+
+    private static void DrawDossier(DrawingContext dc, PixelRect place, PanelLayoutResult panel, double screenHeight)
+    {
+        var scale = screenHeight / BracketMetrics.ReferenceScreenHeight;
+        var corner = panel.IsEmpty ? 6.0 * scale : panel.CornerRadius;
+        dc.DrawRoundedRectangle(ToastFill, null, new Rect(place.X, place.Y, place.Width, place.Height), corner, corner);
+
+        var size = (panel.IsEmpty ? 22.0 * scale : panel.FontSize) * 1.5;
+        var text = Format("Dossier", size);
+        var origin = new Point(place.X + (place.Width - text.WidthIncludingTrailingWhitespace) / 2, place.Y + (place.Height - text.Height) / 2);
+        var shape = text.BuildGeometry(origin);
+        if (shape is null)
+            return;
+        dc.DrawGeometry(null, RoundPen(DarkBrush, Math.Max(2.0, size * 0.16)), shape);
+        dc.DrawGeometry(Brushes.White, null, shape);
     }
 
     private static void DrawBrackets(DrawingContext dc, BracketItem item, double screenHeight)
@@ -237,10 +259,10 @@ public sealed class OverlayPainter
         dc.DrawGeometry(Brushes.White, null, shape);
     }
 
-    public static (Rect Box, FormattedText Text, Point Origin) MiningLayout(MiningLabelItem label)
+    public static (Rect Box, FormattedText Text, Point Origin) MiningLayout(MiningLabelItem label, double scale = 1.0)
     {
         var settings = MiningSettings.Default;
-        var h = Math.Max(6.0, label.DigitHeight);
+        var h = Math.Max(6.0, label.DigitHeight * scale);
         var size = h / CapHeightEm;
         var text = new FormattedText(label.Text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, OverlayFonts.Bold, size, MiningBrush(label.TextColour, 0xFF), 1.0);
         var padX = settings.LabelPadXLines * h;
@@ -255,9 +277,9 @@ public sealed class OverlayPainter
 
     private const double CapHeightEm = 0.7;
 
-    private static void DrawMining(DrawingContext dc, MiningLabelItem label, PixelRect origin)
+    private void DrawMining(DrawingContext dc, MiningLabelItem label, PixelRect origin)
     {
-        var (box, text, at) = MiningLayout(label);
+        var (box, text, at) = MiningLayout(label, MiningScale);
         var shift = new TranslateTransform(-origin.X, -origin.Y);
         shift.Freeze();
         dc.PushTransform(shift);

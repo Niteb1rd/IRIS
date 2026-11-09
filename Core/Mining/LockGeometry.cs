@@ -21,6 +21,9 @@ public sealed class LockGeometry
         var median = new PixelRect(Median(r => r.Box.X), Median(r => r.Box.Y), Median(r => r.Box.Width), Median(r => r.Box.Height));
         var row = Median(r => r.RowTop);
         var height = Median(r => r.DigitHeight);
+        if (locked.DigitHeight > 0
+            && Math.Abs(height - locked.DigitHeight) < Math.Max(_settings.LabelSizeChangePx, _settings.LabelSizeChangeShare * locked.DigitHeight))
+            height = locked.DigitHeight;
         var move = _settings.GeometryChangePx;
         var differs = Math.Abs(median.X - locked.SignalBox.X) >= move || Math.Abs(median.Y - locked.SignalBox.Y) >= move
             || Math.Abs(median.Right - locked.SignalBox.Right) >= move || Math.Abs(median.Y + median.Height - (locked.SignalBox.Y + locked.SignalBox.Height)) >= move

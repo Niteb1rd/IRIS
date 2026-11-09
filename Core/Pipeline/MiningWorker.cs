@@ -49,6 +49,22 @@ public sealed class MiningWorker : IDisposable
 
     private string? _keptText;
 
+    public Action<Mat, Rect, int, int, SignalRead, SignalRead>? KeepTableCrop { get; set; }
+
+    private PerValueCooldown? _tableCrops;
+
+    public Action<LossGroup>? KeepLoss
+    {
+        get => _loss?.Emit;
+        set
+        {
+            _loss?.Dispose();
+            _loss = value is null ? null : new MiningLossCapture(_settings) { Emit = value };
+        }
+    }
+
+    private MiningLossCapture? _loss;
+
     public bool HasPending => _pending is not null;
 
     public bool Accepts(CapturedFrame frame)
@@ -113,10 +129,12 @@ public sealed class MiningWorker : IDisposable
             _keptText = null;
             ForgetHistory();
             _geometry.Clear();
+            _loss?.Clear();
         }
 
         var started = Stopwatch.GetTimestamp();
         var read = _reader.Read(region.Image, region.Region, frame.WindowWidth, frame.WindowHeight);
+        var single = read;
         var source = Improve(ref read, region, frame);
         var ms = (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
         _stats?.AddMiningRead(ms);
@@ -127,6 +145,17 @@ public sealed class MiningWorker : IDisposable
         }
 
         var table = _tables?.Current(_clock.NowMs) ?? MiningTable.Embedded;
+        _loss?.Add(single, region, frame, table);
+        var snapped = TableSnap.Apply(read, table, _reader.Settings);
+        if (!ReferenceEquals(snapped, read))
+        {
+            read = snapped;
+            source += "+table";
+            _tableCrops ??= new PerValueCooldown(_settings.TableCropCooldownMs);
+            if (KeepTableCrop is not null && snapped.Value is { } value && _tableCrops.TryTake(value, frame.FrameMs))
+                KeepTableCrop(region.Image, region.Region, frame.WindowWidth, frame.WindowHeight, single, snapped);
+        }
+
         var labelBefore = _state.Label;
         var changed = _state.Apply(read, frame.FrameMs, table);
         var confident = SignalConfidence.IsConfident(read, _settings.ConfidentMargin);
@@ -200,7 +229,11 @@ public sealed class MiningWorker : IDisposable
         _lastConfident = null;
     }
 
-    public void Dispose() => _average.Dispose();
+    public void Dispose()
+    {
+        _average.Dispose();
+        _loss?.Dispose();
+    }
 
     private void Send(List<IndexUpdate> updates, double workStartMs) => UpdateTiming.Send(_sink, updates, _clock, workStartMs, double.NaN);
 
@@ -211,6 +244,7 @@ public sealed class MiningWorker : IDisposable
         _epoch = snapshot.Epoch;
         _pending = null;
         ForgetHistory();
+        _loss?.Clear();
         _state = null;
         _stateLockedMs = double.NaN;
     }

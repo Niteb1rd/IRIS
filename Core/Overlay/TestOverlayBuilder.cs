@@ -27,7 +27,7 @@ public static class TestOverlayBuilder
     private const int Rows = 2;
 
     public static OverlayModel Build(SocialConfig config, double screenWidth, double screenHeight, TrackingBoundary? boundary = null,
-        TestOverlayPart part = TestOverlayPart.Boundary)
+        TestOverlayPart part = TestOverlayPart.Boundary, AppSettings? settings = null)
     {
         var area = boundary ?? TrackingBoundary.Default;
         var names = GenericNames.GetEnumerator();
@@ -78,8 +78,16 @@ public static class TestOverlayBuilder
 
         var model = OverlayModelBuilder.Build(detections, shown, Lookup);
         return part == TestOverlayPart.Panel
-            ? new OverlayModel(Array.Empty<BracketItem>(), model.Panel)
+            ? new OverlayModel(Array.Empty<BracketItem>(), model.Panel, dossier: DossierBox(settings, screenWidth, screenHeight))
             : new OverlayModel(model.Brackets, Array.Empty<PanelEntry>(), area.ToPixels(screenWidth, screenHeight));
+    }
+
+    private static PixelRect? DossierBox(AppSettings? settings, double screenWidth, double screenHeight)
+    {
+        if (settings is null)
+            return null;
+        var place = DossierText.PlaceFor(settings, screenWidth, screenHeight);
+        return place.IsEmpty ? null : new PixelRect(place.Left, place.Top, place.Width, place.Bottom - place.Top);
     }
 
     private static IReadOnlyList<OrgMembership> OrgsFor(OrgAttributeRule rule, string sid, string name) => rule.Kind switch

@@ -73,6 +73,12 @@ public sealed partial class LiveDetectionService : IDisposable
     private OverlayModel _lastShown = OverlayModel.Empty;
     private double _lastIndexPublishMs;
 
+    private int _miningCropsKept;
+    private int _tableCropsKept;
+    private int _trackingCropsKept;
+    private int _readCropsKept;
+    private readonly int[] _lossGroupsKept = new int[4];
+
     public LiveDetectionService(AppServices services, OverlayController overlay)
     {
         _services = services;

@@ -9,13 +9,11 @@ public sealed class RuleRowViewModel : ObservableObject
 {
     private AttributeKind _kind;
     private string _value;
-    private int _priority;
     private OverlayColor _color;
 
-    public RuleRowViewModel(AttributeKind kind, string? value, int priority, OverlayColor color)
+    public RuleRowViewModel(AttributeKind kind, string? value, OverlayColor color)
     {
         _kind = kind;
-        _priority = priority;
         _color = color;
         NeedsValue = Choices.KindNeedsValue(kind);
         InfoText = Choices.InfoTextFor(kind);
@@ -58,12 +56,6 @@ public sealed class RuleRowViewModel : ObservableObject
             if (Set(ref _value, value ?? string.Empty))
                 Raise(nameof(HasInvalidValue));
         }
-    }
-
-    public int Priority
-    {
-        get => _priority;
-        set => Set(ref _priority, value);
     }
 
     public OverlayColor Color

@@ -13,8 +13,8 @@ IRIS.exe is not code-signed, so Windows SmartScreen may show "Windows protected 
 1. Run IRIS-installer.exe, or unzip IRIS-portable.zip to an IRIS folder.
 2. Run IRIS.exe. The first time Windows may ask to install the Microsoft .NET, accept.
 3. Set Star Citizen Window Mode to Borderless (Sorry other modes do not work).
-4. Right-click the IRIS tray icon, choose Settings, and add players and orgs.
-5. Press Show Boundary and Show Info Panel to check and resize the boundary and the panel, then Save.
+4. In game, use Shift+F12 (default) to toggle On/Off IRIS and Shift+0 (zero, default) to toggle the Interactive Overlay.
+5. To change settings, right-click the IRIS tray icon and choose Settings: Change Capture, Tracking, Overlay settings, Import/Export list configs, edit hotkeys.
 
 ## Requirements
 
@@ -32,9 +32,12 @@ Settings > Capture > Capture Method:
 
 For better tracking, turn off Hardware-Accelerated GPU Scheduling (Windows Settings > System > Display > Graphics, then restart the PC). Turning on Nvidia Low Latency Mode or AMD Anti-Lag also offers a benefit.
 
+Names read best with Chromatic Aberration turned off in Star Citizen's graphics settings. IRIS shows a note in the side panel when it finds it on.
+
 ## Lists
 
 - In settings, Players, Orgs and Org-Attribute tabs set who gets a bracket and which colour.
+- Orgs and Org-Attribute tabs each have a Color Rank: when several rows match a player, the higher-ranked colour wins.
 - Import and Export share lists; a Hosted Config URL lets an org share one list.
 - Config\exclusions.txt holds names IRIS ignores; edit it in Notepad.
 - "Only check main org" (Orgs and Org-Attribute tabs) ignores a player's affiliate orgs for that tab.
@@ -44,9 +47,9 @@ For better tracking, turn off Hardware-Accelerated GPU Scheduling (Windows Setti
 
 Change them in Settings > Hotkeys.
 
-- Shift+F11: Toggle Overlay.
-- Shift+F12: Toggle Info Panel.
-- Tab: Activate Overlay for 10 seconds (5-30) while the overlay is off
+- Shift+F12: Toggle IRIS On/Off.
+- Tab: Activate IRIS for 10 seconds (5-30) while the overlay is off
+- Shift+0 (zero): Toggle Interactive Overlay (click players to colour them, open a dossier, write notes); Esc or its X button also closes it.
 
 ## Mining
 
@@ -54,7 +57,6 @@ Change them in Settings > Hotkeys.
 - Settings has Edit Mining Signals Data, which opens Config\mining.txt to change the look-up table; delete that file to go back to defaults.
 - A signal above the table maximum shows "Multiple" or "Ore/Multiple".
 - Can disable Mining feature in Settings.
-- The resource text requires the info panel to be on.
 
 ## Network
 
@@ -73,7 +75,7 @@ By hand: run the new IRIS-installer.exe, or download IRIS-portable.zip and copy 
 
 ## Uninstall
 
-Installed: Windows Settings > Apps > IRIS > Uninstall. This removes IRIS and all its files, including your lists and settings; export your lists first if you want to keep them.
+Installed: Windows Settings > Apps > IRIS > Uninstall. Uninstall removes IRIS and all its files, including lists, settings and dossier notes. Copy any you want to keep first.
 
 Portable: quit IRIS and delete its folder.
 

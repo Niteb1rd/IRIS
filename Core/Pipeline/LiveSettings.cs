@@ -58,6 +58,12 @@ public sealed record LiveSettings
 
     public const double BlankNoteAfterMs = 3000.0;
 
+    public const int AberrationOnCrops = 12, AberrationOnShifted = 8;
+
+    public const int AberrationOffCrops = 40, AberrationOffUnshifted = 30;
+
+    public const double AberrationNoteMs = 30000.0;
+
     public const long FirstFrameTimeoutMs = 5000;
 
     public const int FramePoolSize = 9;

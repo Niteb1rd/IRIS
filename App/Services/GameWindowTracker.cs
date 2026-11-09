@@ -58,6 +58,18 @@ public sealed class GameWindowTracker : IDisposable
 
     public void Stop() => _timer.Stop();
 
+    public GameWindowSnapshot CheckWithModeNow()
+    {
+        try
+        {
+            return Evaluate(readModeOnce: true);
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or Win32Exception)
+        {
+            return GameWindowSnapshot.None;
+        }
+    }
+
     public void Dispose()
     {
         _timer.Stop();
@@ -90,7 +102,7 @@ public sealed class GameWindowTracker : IDisposable
         Checked?.Invoke(this, Current);
     }
 
-    private GameWindowSnapshot Evaluate()
+    private GameWindowSnapshot Evaluate(bool readModeOnce = false)
     {
         var foreground = NativeMethods.GetForegroundWindow();
         if (foreground == IntPtr.Zero)
@@ -107,6 +119,8 @@ public sealed class GameWindowTracker : IDisposable
 
         var style = NativeMethods.GetStyle(foreground);
         var mode = ReadGameMode(processId, cameToFront: Current.Handle != foreground);
+        if (mode is null && readModeOnce)
+            mode = ReadModeOnce(processId);
         var state = GameWindowRules.Decide(true, mode);
         return new GameWindowSnapshot(state, window, (int)processId, foreground, style, monitor, mode);
     }
@@ -232,7 +246,8 @@ public sealed class GameWindowTracker : IDisposable
         var parsed = StarCitizenDisplaySettings.ParseWindowMode(text);
         if (parsed is not null)
         {
-            _log.Write(_clock.UtcNow, $"Star Citizen display settings file: {info.AttributesPath}");
+            if (AppVersion.Diagnostics)
+                _log.Write(_clock.UtcNow, $"Star Citizen display settings file: {info.AttributesPath}");
             _log.Write(_clock.UtcNow, $"Star Citizen display mode: {parsed}");
             return Track(info, info.AttributesPath!, parsed).Mode;
         }
@@ -250,6 +265,18 @@ public sealed class GameWindowTracker : IDisposable
             return WindowMode.Borderless;
         }
         return Track(info, info.AttributesPath, WindowMode.Borderless).Mode;
+    }
+
+    private WindowMode ReadModeOnce(uint processId)
+    {
+        if (!_gameInfo.TryGetValue(processId, out var info))
+            info = RefreshGameInfo(processId);
+        if (info.AttributesPath is null && info.ExePath is not null)
+            info.AttributesPath = StarCitizenDisplaySettings.AttributesPathFor(info.ExePath, File.Exists, FindAttributesCandidates);
+        var text = info.AttributesPath is null ? null : TryReadText(info.AttributesPath);
+        var mode = StarCitizenDisplaySettings.ParseWindowMode(text) ?? WindowMode.Borderless;
+        _log.Write(_clock.UtcNow, $"Star Citizen display mode read for the Interactive Overlay: {mode}");
+        return mode;
     }
 
     private void SetPaused(bool paused)

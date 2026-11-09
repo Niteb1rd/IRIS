@@ -99,7 +99,7 @@ public static class RegionPlanner
         Func<MarkerRecord, bool>? nameWhenLost = null)
     {
         var plans = new Dictionary<int, PlannedPatch>();
-        var budget = (long)settings.MaxTickPixels;
+        var budget = settings.TickPixelsAt(windowHeight);
         foreach (var marker in markers.OrderByDescending(m => m.LastFoundMs).ThenBy(m => m.Id))
         {
             var name = withName(marker);
@@ -164,12 +164,13 @@ public static class RegionPlanner
     private static Rect? SoftCappedPatch(
         MarkerRecord marker, double targetMs, double extraMarginPx, bool withName, bool lostGrowth, int windowWidth, int windowHeight, PipelineSettings settings, out double marginPx)
     {
+        var cap = settings.PatchPixelsAt(windowHeight);
         var wide = Patch(marker, targetMs, extraMarginPx, null, windowWidth, windowHeight, settings, out marginPx, withName, lostGrowth);
-        if (wide is not { } rect || Area(rect) <= settings.MaxPatchPixels)
+        if (wide is not { } rect || Area(rect) <= cap)
             return wide;
         var low = Math.Min(marginPx, marker.Height * settings.SearchBaseLines + extraMarginPx);
         var floorPatch = Patch(marker, targetMs, 0.0, low, windowWidth, windowHeight, settings, out _, withName, lostGrowth);
-        if (floorPatch is not { } floorRect || Area(floorRect) >= settings.MaxPatchPixels)
+        if (floorPatch is not { } floorRect || Area(floorRect) >= cap)
         {
             marginPx = low;
             return floorPatch ?? wide;
@@ -182,7 +183,7 @@ public static class RegionPlanner
         {
             var mid = (low + high) / 2.0;
             var trial = Patch(marker, targetMs, 0.0, mid, windowWidth, windowHeight, settings, out _, withName, lostGrowth);
-            if (trial is { } fit && Area(fit) <= settings.MaxPatchPixels)
+            if (trial is { } fit && Area(fit) <= cap)
             {
                 low = mid;
                 best = fit;

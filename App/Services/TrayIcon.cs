@@ -1,4 +1,5 @@
 using System;
+using System.Drawing;
 using Forms = System.Windows.Forms;
 
 namespace Iris.App.Services;
@@ -12,7 +13,6 @@ public sealed class TrayIcon : IDisposable
     private readonly Forms.NotifyIcon _icon;
     private readonly Forms.ContextMenuStrip _menu;
     private readonly Forms.ToolStripMenuItem _disableOverlayItem;
-    private readonly Forms.ToolStripMenuItem _disablePanelItem;
     private bool _disposed;
 
     public TrayIcon()
@@ -22,9 +22,6 @@ public sealed class TrayIcon : IDisposable
 
         _disableOverlayItem = new Forms.ToolStripMenuItem("Disable Overlay");
         _disableOverlayItem.Click += (_, _) => ToggleOverlayRequested?.Invoke(this, EventArgs.Empty);
-
-        _disablePanelItem = new Forms.ToolStripMenuItem("Disable Info Panel");
-        _disablePanelItem.Click += (_, _) => TogglePanelRequested?.Invoke(this, EventArgs.Empty);
 
         var openLogItem = new Forms.ToolStripMenuItem("Open log");
         openLogItem.Click += (_, _) => OpenLogRequested?.Invoke(this, EventArgs.Empty);
@@ -38,12 +35,12 @@ public sealed class TrayIcon : IDisposable
         _menu = new Forms.ContextMenuStrip();
         _menu.Items.Add(settingsItem);
         _menu.Items.Add(_disableOverlayItem);
-        _menu.Items.Add(_disablePanelItem);
         _menu.Items.Add(new Forms.ToolStripSeparator());
         _menu.Items.Add(openLogItem);
         _menu.Items.Add(openConfigItem);
         _menu.Items.Add(new Forms.ToolStripSeparator());
         _menu.Items.Add(quitItem);
+        _menu.Opened += (_, _) => KeepAboveTaskbar();
 
         _icon = new Forms.NotifyIcon
         {
@@ -53,6 +50,17 @@ public sealed class TrayIcon : IDisposable
             Visible = true,
         };
         _icon.DoubleClick += (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void KeepAboveTaskbar()
+    {
+        var bounds = _menu.Bounds;
+        var area = Forms.Screen.FromPoint(new Point(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2)).WorkingArea;
+        var x = Math.Max(area.Left, Math.Min(bounds.Left, area.Right - bounds.Width));
+        var y = Math.Max(area.Top, Math.Min(bounds.Top, area.Bottom - bounds.Height));
+        if (x != bounds.Left || y != bounds.Top)
+            _menu.Location = new Point(x, y);
+        NativeMethods.SetWindowPos(_menu.Handle, NativeMethods.HwndTopmost, 0, 0, 0, 0, NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
     }
 
     public event EventHandler? SettingsRequested;
@@ -65,8 +73,6 @@ public sealed class TrayIcon : IDisposable
 
     public event EventHandler? ToggleOverlayRequested;
 
-    public event EventHandler? TogglePanelRequested;
-
     public void SetOverlayDisabled(bool savedDisabled, bool disabled)
     {
         if (_disposed)
@@ -74,12 +80,6 @@ public sealed class TrayIcon : IDisposable
         _disableOverlayItem.Checked = savedDisabled;
         AppIcons.SetOverlayDisabled(disabled);
         _icon.Icon = AppIcons.Tray;
-    }
-
-    public void SetPanelDisabled(bool disabled)
-    {
-        if (!_disposed)
-            _disablePanelItem.Checked = disabled;
     }
 
     public void SetActivity(string? activity)

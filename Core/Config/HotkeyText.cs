@@ -13,6 +13,12 @@ public sealed record Hotkey(HotkeyModifiers Modifiers, int VirtualKey);
 
 public static class HotkeyText
 {
+    public const int EscapeKey = 0x1B;
+
+    public const string EscapeError = "Esc is the Interactive Overlay's exit key and cannot be a hotkey.";
+
+    public static string? EscapeProblem(Hotkey hotkey) => hotkey.VirtualKey == EscapeKey ? EscapeError : null;
+
     private static readonly Dictionary<string, int> KeyByName = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<int, string> NameByKey = new();
 
@@ -42,12 +48,14 @@ public static class HotkeyText
         Add("Down", 0x28);
         Add("Left", 0x25);
         Add("Right", 0x27);
+        Add("Esc", EscapeKey);
 
         KeyByName["Return"] = 0x0D;
         KeyByName["Del"] = 0x2E;
         KeyByName["Ins"] = 0x2D;
         KeyByName["PgUp"] = 0x21;
         KeyByName["PgDn"] = 0x22;
+        KeyByName["Escape"] = EscapeKey;
     }
 
     private static void Add(string name, int virtualKey)

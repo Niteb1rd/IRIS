@@ -8,6 +8,7 @@ using System.Windows.Media.Imaging;
 using Iris.App.Services;
 using Iris.Core.Overlay;
 using Iris.Core.Config;
+using Iris.Core.Mining;
 using Iris.Core.Pipeline;
 
 namespace Iris.App.Views;
@@ -133,6 +134,7 @@ public sealed class OverlayWindow : IDisposable
         var showsPanel = _layer is OverlayLayer.All or OverlayLayer.Panel;
         var layout = showsPanel ? PanelLayout.Compute(model.Panel, bounds.Width, bounds.Height, settings, model.Note, toast) : PanelLayoutResult.Empty;
 
+        _painter.MiningScale = settings.MiningLabelZoomPercent / 100.0;
         var fit = Fit(model, layout, bounds);
         if (fit.IsEmpty)
         {
@@ -261,7 +263,7 @@ public sealed class OverlayWindow : IDisposable
         {
             if (model.Mining is not { } label)
                 return default;
-            var box = OverlayPainter.MiningLayout(label).Box;
+            var box = OverlayPainter.MiningLayout(label, _painter.MiningScale).Box;
             return OverlayWindowFit.Choose(_fit.IsEmpty ? null : _fit, new PixelRect(box.X, box.Y, box.Width, box.Height), whole, 4.0);
         }
 

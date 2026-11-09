@@ -29,6 +29,7 @@ public partial class App : Application
     private HostedConfigAutoChecker? _hostedChecker;
     private UpdateNotifier? _updateNotifier;
     private OverlayController? _overlay;
+    private InteractiveOverlay? _interactive;
     private LiveDetectionService? _live;
     private bool _shuttingDown;
 
@@ -101,6 +102,7 @@ public partial class App : Application
         var overlay = new OverlayController(services, imports);
         _overlay = overlay;
         overlay.Start();
+        _interactive = new InteractiveOverlay(services, overlay, () => _configWindow);
 
         void RequestBorderlessCapture()
         {
@@ -114,19 +116,10 @@ public partial class App : Application
         _live = live;
         live.Start();
 
-        void SyncTrayChecks()
-        {
-            tray.SetOverlayDisabled(services.Settings.OverlayDisabled, services.IsOverlayDisabled);
-            tray.SetPanelDisabled(!services.Settings.PanelEnabled);
-        }
+        void SyncTrayChecks() => tray.SetOverlayDisabled(services.Settings.OverlayDisabled, services.IsOverlayDisabled);
         tray.ToggleOverlayRequested += (_, _) =>
         {
-            overlay.ToggleFromTray(HotkeyAction.ToggleOverlay);
-            SyncTrayChecks();
-        };
-        tray.TogglePanelRequested += (_, _) =>
-        {
-            overlay.ToggleFromTray(HotkeyAction.TogglePanel);
+            overlay.ToggleFromTray();
             SyncTrayChecks();
         };
         services.SettingsApplied += (_, _) => SyncTrayChecks();
@@ -144,6 +137,13 @@ public partial class App : Application
             return;
 
         updater.StartFillMissing();
+
+        if (services.ColorRanksFixedAtStartup)
+        {
+            PromptDialog.Tell(AppServices.ColorRanksFixedText, owner: null, userJustActed: true);
+            if (_shuttingDown)
+                return;
+        }
 
         if (leftovers > 0 && IsMiningFileOutdated(services))
         {
@@ -203,6 +203,8 @@ public partial class App : Application
         _updateNotifier = null;
         _live?.Dispose();
         _live = null;
+        _interactive?.Dispose();
+        _interactive = null;
         _overlay?.Dispose();
         _overlay = null;
         _tray?.Dispose();

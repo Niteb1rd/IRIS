@@ -130,6 +130,9 @@ public sealed partial class ScanWorker
         }
 
         _templateWhy = "hit reach " + reach;
+        var lh = Math.Max(1.0, marker.Height);
+        _templateDistLh = Math.Sqrt((centre - centreX) * (centre - centreX) + (lineTop - top) * (lineTop - top)) / lh;
+        _templateReachLh = reach / lh;
         keep.Following = !tracked;
         keep.AnchorMs = frameMs;
         keep.CentreX = centre;

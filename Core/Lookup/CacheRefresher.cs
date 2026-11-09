@@ -242,6 +242,23 @@ public sealed class CacheRefresher
         summary.OrgsRefreshed++;
     }
 
+    public async Task<PlayerExtra?> FetchProfileAsync(string handle, CancellationToken ct = default)
+    {
+        Interlocked.Increment(ref _liveRunning);
+        try
+        {
+            var page = await _rsi.GetPlayerProfileAsync(handle, ct).ConfigureAwait(false);
+            if (page.Status != RsiStatus.Found)
+                return null;
+            _database.SaveProfile(handle, page.Data!.Moniker, ProfilePageParser.Shown(page.Data.CitizenRecord), _clock.UtcNow);
+            return _database.GetPlayerExtra(handle);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _liveRunning);
+        }
+    }
+
     public Task<PlayerLookup> LookupPlayerAsync(string handle, CancellationToken ct = default) =>
         GetPlayerCacheFirstAsync(handle, CacheSource.OrgListMember, ct);
 

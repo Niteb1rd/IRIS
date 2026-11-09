@@ -31,6 +31,13 @@ public static class RsiUrls
         return $"{BaseUrl}/en/citizens/{handle}/organizations";
     }
 
+    public static string PlayerProfile(string handle)
+    {
+        if (!RsiNames.IsValidHandle(handle))
+            throw new ArgumentException("invalid name", nameof(handle));
+        return $"{BaseUrl}/en/citizens/{handle}";
+    }
+
     public static string OrgPage(string sid)
     {
         if (!RsiNames.IsValidSid(sid))

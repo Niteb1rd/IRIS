@@ -35,6 +35,10 @@ public partial class ConfigWindow : Window, IImportHost
     private readonly ObservableCollection<PlayerRowViewModel> _players = new();
     private readonly ObservableCollection<OrgRowViewModel> _orgs = new();
     private readonly ObservableCollection<RuleRowViewModel> _rules = new();
+    private readonly ObservableCollection<RankStripItem> _orgRankItems = new();
+    private readonly ObservableCollection<RankStripItem> _ruleRankItems = new();
+    private IReadOnlyList<OverlayColor> _orgRanking = Array.Empty<OverlayColor>();
+    private IReadOnlyList<OverlayColor> _ruleRanking = Array.Empty<OverlayColor>();
     private readonly CancellationTokenSource _closing = new();
 
     private readonly Dictionary<ListRowViewModel, Task> _checks = new();
@@ -78,7 +82,9 @@ public partial class ConfigWindow : Window, IImportHost
         AppTheme.Attach(this);
 
         ConfigureSlider(PanelWidthSlider, AppSettings.PanelWidthPercentMin, AppSettings.PanelWidthPercentMax);
+        ConfigureSlider(DossierWidthSlider, AppSettings.DossierWidthPercentMin, AppSettings.DossierWidthPercentMax);
         ConfigureSlider(PanelTextSizeSlider, AppSettings.PanelTextSizeMin, AppSettings.PanelTextSizeMax);
+        ConfigureSlider(MiningZoomSlider, AppSettings.MiningLabelZoomPercentMin, AppSettings.MiningLabelZoomPercentMax);
         ConfigureSlider(PanelRightGapSlider, AppSettings.PanelRightGapPercentMin, AppSettings.PanelRightGapPercentMax);
         ConfigureSlider(PanelTopGapSlider, AppSettings.PanelTopGapPercentMin, AppSettings.PanelTopGapPercentMax);
         ConfigureSlider(TrackingFpsSlider, AppSettings.NameplateTrackingFpsMin, AppSettings.NameplateTrackingFpsMax);
@@ -88,10 +94,14 @@ public partial class ConfigWindow : Window, IImportHost
             WindowScaleCombo.Items.Add(percent.ToString(CultureInfo.InvariantCulture) + " %");
         for (var seconds = AppSettings.TimedOverlaySecondsMin; seconds <= AppSettings.TimedOverlaySecondsMax; seconds++)
             TimedSecondsCombo.Items.Add(seconds.ToString(CultureInfo.InvariantCulture));
+        for (var seconds = AppSettings.TrackingLossSecondsMin; seconds <= AppSettings.TrackingLossSecondsMax; seconds += AppSettings.TrackingLossSecondsStep)
+            TrackingLossCombo.Items.Add(seconds.ToString(CultureInfo.InvariantCulture));
 
         PlayersList.ItemsSource = _players;
         OrgsList.ItemsSource = _orgs;
         RulesList.ItemsSource = _rules;
+        OrgRankStrip.ItemsSource = _orgRankItems;
+        RuleRankStrip.ItemsSource = _ruleRankItems;
 
         _players.CollectionChanged += OnRowsChanged;
         _orgs.CollectionChanged += OnRowsChanged;
@@ -171,15 +181,18 @@ public partial class ConfigWindow : Window, IImportHost
         foreach (var p in config.Players)
             _players.Add(new PlayerRowViewModel(p.Handle, p.Color, IsExcluded));
         foreach (var o in config.Orgs)
-            _orgs.Add(new OrgRowViewModel(o.Sid, o.Priority, o.Color));
+            _orgs.Add(new OrgRowViewModel(o.Sid, o.Color));
         foreach (var r in config.OrgRules.Where(rule => rule.Kind != AttributeKind.NoMatch))
-            _rules.Add(new RuleRowViewModel(r.Kind, r.Value, r.Priority, r.Color));
+            _rules.Add(new RuleRowViewModel(r.Kind, r.Value, r.Color));
 
         OrgsMainOnlyCheck.IsChecked = config.OrgsMainOrgOnly;
         RulesMainOnlyCheck.IsChecked = config.OrgRulesMainOrgOnly;
 
         var noMatch = NoMatchRule.Find(config) ?? NoMatchRule.CreateDefault();
-        _rules.Add(new RuleRowViewModel(AttributeKind.NoMatch, null, NoMatchRule.Priority, noMatch.Color));
+        _rules.Add(new RuleRowViewModel(AttributeKind.NoMatch, null, noMatch.Color));
+        _orgRanking = ColorRanks.OrgRanking(config);
+        _ruleRanking = ColorRanks.RuleRanking(config);
+        SyncRankings();
 
         foreach (var row in NameRows().ToList())
             StartCheck(row);

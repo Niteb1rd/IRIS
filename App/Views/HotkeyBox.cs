@@ -154,7 +154,6 @@ public sealed class HotkeyBox : TextBox
             ShowText();
             return;
         }
-
         _value = HotkeyText.Format(hotkey!);
         EndCapture();
         HotkeyChanged?.Invoke(this, EventArgs.Empty);

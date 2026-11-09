@@ -40,11 +40,25 @@ public sealed record PipelineSettings
 
     public double LostSearchGrowLinesPerSec { get; init; } = 30.0;
 
-    public double LostSearchMaxLines { get; init; } = 16.0;
+    public double LostSearchMaxLines { get; init; } = 10.0;
 
     public int MaxPatchPixels { get; init; } = 150000;
 
     public int MaxTickPixels { get; init; } = 400000;
+
+    public const double PixelReferenceHeight = 1440.0;
+
+    public long PatchPixelsAt(int windowHeight) => ScaledArea(MaxPatchPixels, windowHeight);
+
+    public long TickPixelsAt(int windowHeight) => ScaledArea(MaxTickPixels, windowHeight);
+
+    private static long ScaledArea(int pixels, int windowHeight)
+    {
+        if (windowHeight <= 0)
+            return pixels;
+        var scale = windowHeight / PixelReferenceHeight;
+        return Math.Max(1L, (long)Math.Round(pixels * scale * scale));
+    }
 
     public double MaxPatchWindowShare { get; init; } = 0.10;
 
@@ -156,6 +170,8 @@ public sealed record PipelineSettings
 
     public double PanelStaleMs { get; init; } = 5000.0;
 
+    public double PanelKeepMaxMs { get; init; } = 30000.0;
+
     public double FreshnessIntervalFactor { get; init; } = 3.0;
 
     public int TrackingTimesKept { get; init; } = 64;
@@ -264,9 +280,35 @@ public sealed record PipelineSettings
 
     public int TrackCropsPerRun { get; init; } = 600;
 
+    public int TrackCropSamplesPerName { get; init; } = 2;
+
     public int ReadCropsPerPlate { get; init; } = 6;
 
     public int ReadCropsPerRun { get; init; } = 600;
+
+    public int ReadCropsUnknownPerRun { get; init; } = 80;
+
+    public int UnknownReadDistance { get; init; } = 2;
+
+    public double LossCentreShare { get; init; } = 0.25;
+
+    public double LossMinLineHeightPx { get; init; } = 10.0;
+
+    public double LossMaxSpeedLinesPerMs { get; init; } = 0.05;
+
+    public double LossNeighbourLines { get; init; } = 2.0;
+
+    public int LossAfterFrames { get; init; } = 2;
+
+    public double LossCropMarginLines { get; init; } = 1.0;
+
+    public double LossReacquireMs { get; init; } = 1500.0;
+
+    public double LossReacquireReachLines { get; init; } = 2.0;
+
+    public double LossCooldownMs { get; init; } = 10000.0;
+
+    public int LossGroupsPerFolder { get; init; } = 1000;
 
     public double NameCentreTolerancePx { get; init; } = 3.0;
 
@@ -314,6 +356,9 @@ public sealed record PipelineSettings
               && 1 + NameAnchorCost + FingerprintWeight * (1 - NameAnchorMin) < MissCost
               && 1 + WidthWeight * NameUnverifiedWidthLines + NameUnverifiedCost < MissCost))
             return "The partial-name and covered-plate settings must be in range, and every pair cost must stay below the miss cost.";
+        if (!(LossCentreShare > 0 && LossCentreShare <= 0.5 && LossMinLineHeightPx >= 0 && LossMaxSpeedLinesPerMs >= 0 && LossNeighbourLines >= 0 && LossAfterFrames >= 1
+              && LossCropMarginLines >= 0 && LossReacquireMs >= 0 && LossReacquireReachLines >= 0 && LossCooldownMs >= 0 && LossGroupsPerFolder >= 0))
+            return "The loss crop settings must not be negative, LossAfterFrames must be at least 1 and LossCentreShare in (0, 0.5].";
         return null;
     }
 }

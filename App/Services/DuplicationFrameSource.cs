@@ -12,7 +12,7 @@ using Vx = Vortice.DXGI;
 
 namespace Iris.App.Services;
 
-public sealed class DuplicationFrameSource : IFrameSource
+public sealed partial class DuplicationFrameSource : IFrameSource
 {
     private sealed class Slot
     {
@@ -36,6 +36,7 @@ public sealed class DuplicationFrameSource : IFrameSource
     private int _heldOffsetY;
     private long _retryAtTick;
     private string? _lastProblem;
+    private string? _lastLayout;
     private bool _disposed;
     private double _lastGameFrameMs = double.NegativeInfinity;
     private NativeMethods.NativeRect[] _dirtyRects = new NativeMethods.NativeRect[16];
@@ -201,7 +202,8 @@ public sealed class DuplicationFrameSource : IFrameSource
                     if (left < 0 || top < 0 || left + region.Width > width || top + region.Height > height)
                     {
                         ReleaseHeldFrame();
-                        return GrabRegionsResult.Unavailable("a capture region is not on the game's screen (the game window must be completely on one monitor)");
+                        return GrabRegionsResult.Unavailable(
+                            $"the game window reaches past its screen ({width}x{height} at {_monitorBounds.X},{_monitorBounds.Y}; game picture from {_heldOffsetX + _monitorBounds.X},{_heldOffsetY + _monitorBounds.Y}): it must be completely on one monitor");
                     }
                 }
 
@@ -341,6 +343,7 @@ public sealed class DuplicationFrameSource : IFrameSource
                             _duplication = output1.DuplicateOutput(device);
                             _monitor = monitor;
                             _monitorBounds = bounds;
+                            LogLayout(factory, monitor);
                             return null;
                         }
                     }
@@ -349,6 +352,39 @@ public sealed class DuplicationFrameSource : IFrameSource
         }
 
         return "DXGI has no output for the monitor that shows the game";
+    }
+
+    private void LogLayout(Vx.IDXGIFactory1 factory, IntPtr gameMonitor)
+    {
+        if (Log is null)
+            return;
+        var screens = new List<string>();
+        var game = 0;
+        for (uint a = 0; factory.EnumAdapters1(a, out var adapter).Success; a++)
+        {
+            using (adapter)
+            {
+                var card = adapter.Description1.Description.Trim();
+                for (uint o = 0; adapter.EnumOutputs(o, out var output).Success; o++)
+                {
+                    using (output)
+                    {
+                        var d = output.Description;
+                        var r = d.DesktopCoordinates;
+                        var rotated = d.Rotation is Vx.ModeRotation.Rotate90 or Vx.ModeRotation.Rotate270 ? ", rotated" : "";
+                        screens.Add($"{screens.Count + 1}: {r.Right - r.Left}x{r.Bottom - r.Top} at {r.Left},{r.Top}{rotated} on {card}");
+                        if (d.Monitor == gameMonitor)
+                            game = screens.Count;
+                    }
+                }
+            }
+        }
+
+        var layout = $"the game is on screen {game} of {screens.Count} ({string.Join("; ", screens)})";
+        if (layout == _lastLayout)
+            return;
+        _lastLayout = layout;
+        Log("Desktop duplication: " + layout);
     }
 
     private FrameArrival Acquire(IntPtr hwnd)
@@ -473,108 +509,6 @@ public sealed class DuplicationFrameSource : IFrameSource
     {
         var vtable = Marshal.ReadIntPtr(self);
         return Marshal.GetDelegateForFunctionPointer<T>(Marshal.ReadIntPtr(vtable, slot * IntPtr.Size));
-    }
-
-    private IEnumerable<Slot> AllSlots()
-    {
-        yield return _scan;
-        foreach (var slot in _slots)
-            yield return slot;
-    }
-
-    private Slot[] AssignSlots(IReadOnlyList<Rect> regions, bool firstIsScan)
-    {
-        var result = new Slot?[regions.Count];
-        var used = new HashSet<Slot>();
-        var start = 0;
-        if (firstIsScan && regions.Count > 0)
-        {
-            result[0] = _scan;
-            used.Add(_scan);
-            start = 1;
-        }
-
-        for (var i = start; i < regions.Count; i++)
-        {
-            var width = Bucket(regions[i].Width);
-            var height = Bucket(regions[i].Height);
-            result[i] = _slots.FirstOrDefault(slot => !used.Contains(slot) && slot.Staging is not null && slot.StagingWidth == width && slot.StagingHeight == height);
-            if (result[i] is not null)
-                used.Add(result[i]!);
-        }
-
-        for (var i = start; i < regions.Count; i++)
-        {
-            if (result[i] is not null)
-                continue;
-            var slot = _slots.FirstOrDefault(s => !used.Contains(s));
-            if (slot is null)
-            {
-                slot = new Slot();
-                _slots.Add(slot);
-            }
-
-            result[i] = slot;
-            used.Add(slot);
-        }
-
-        return result!;
-    }
-
-    private static int Bucket(int size) => (size + WgcFrameSource.StagingBucket - 1) / WgcFrameSource.StagingBucket * WgcFrameSource.StagingBucket;
-
-    private void CopyRegion(Vd.ID3D11Texture2D texture, Rect region, Slot slot)
-    {
-        EnsureStaging(slot, region.Width, region.Height);
-        var left = region.X + _heldOffsetX;
-        var top = region.Y + _heldOffsetY;
-        var box = new Vortice.Mathematics.Box(left, top, 0, left + region.Width, top + region.Height, 1);
-        _context!.CopySubresourceRegion(slot.Staging!, 0, 0, 0, 0, texture, 0, box);
-    }
-
-    private void EnsureStaging(Slot slot, int width, int height)
-    {
-        var bucketWidth = Bucket(width);
-        var bucketHeight = Bucket(height);
-        if (slot.Staging is not null && slot.StagingWidth == bucketWidth && slot.StagingHeight == bucketHeight)
-            return;
-        TryDispose(slot.Staging);
-        slot.Staging = null;
-        var description = new Vd.Texture2DDescription
-        {
-            Width = (uint)bucketWidth,
-            Height = (uint)bucketHeight,
-            MipLevels = 1,
-            ArraySize = 1,
-            Format = Vx.Format.B8G8R8A8_UNorm,
-            SampleDescription = new Vx.SampleDescription(1, 0),
-            Usage = Vd.ResourceUsage.Staging,
-            BindFlags = Vd.BindFlags.None,
-            CPUAccessFlags = Vd.CpuAccessFlags.Read,
-            MiscFlags = Vd.ResourceOptionFlags.None,
-        };
-        slot.Staging = _device!.CreateTexture2D(description);
-        slot.StagingWidth = bucketWidth;
-        slot.StagingHeight = bucketHeight;
-    }
-
-    private void ReadStaging(Slot slot, Rect region, Mat destination, bool raw)
-    {
-        var staging = slot.Staging!;
-        var context = _context!;
-        var mapped = context.Map(staging, 0, Vd.MapMode.Read, Vd.MapFlags.None);
-        try
-        {
-            using var source = Mat.FromPixelData(region.Height, region.Width, MatType.CV_8UC4, mapped.DataPointer, mapped.RowPitch);
-            if (raw)
-                source.CopyTo(destination);
-            else
-                Cv2.CvtColor(source, destination, ColorConversionCodes.BGRA2BGR);
-        }
-        finally
-        {
-            context.Unmap(staging, 0);
-        }
     }
 
     private static void TryDispose(IDisposable? value)

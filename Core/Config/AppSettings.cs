@@ -22,13 +22,11 @@ public sealed record AppSettings
     public const int PanelWidthPercentMin = 8;
     public const int PanelWidthPercentMax = 25;
     public const int PanelTextSizeMin = 8;
-    public const int PanelTextSizeMax = 20;
+    public const int PanelTextSizeMax = 25;
     public const int PanelRightGapPercentMin = 0;
     public const int PanelRightGapPercentMax = 15;
     public const int PanelTopGapPercentMin = 0;
     public const int PanelTopGapPercentMax = 15;
-
-    public bool PanelEnabled { get; init; }
 
     public int PanelWidthPercent { get; init; }
 
@@ -40,7 +38,14 @@ public sealed record AppSettings
 
     public OrgDisplay PanelOrgDisplay { get; init; }
 
+    public ImportMode ImportMode { get; init; }
+
     public bool PanelMainOrgOnly { get; init; }
+
+    public const int DossierWidthPercentMin = 25;
+    public const int DossierWidthPercentMax = 45;
+
+    public int DossierWidthPercent { get; init; }
 
 
     public const int BoundaryPercentMin = 0;
@@ -69,6 +74,12 @@ public sealed record AppSettings
 
     public int TrackingCapFps => IsTrackingMax ? 0 : Math.Max(NameplateTrackingFpsMin, NameplateTrackingFps);
 
+    public const int TrackingLossSecondsMin = 5;
+    public const int TrackingLossSecondsMax = 30;
+    public const int TrackingLossSecondsStep = 5;
+
+    public int TrackingLossDisplaySeconds { get; init; }
+
     public CaptureMethod CaptureMethod { get; init; }
 
     public bool OverlayVisibleInCapture { get; init; }
@@ -80,6 +91,12 @@ public sealed record AppSettings
     public bool HideCaptureBorder { get; init; }
 
     public bool MiningDisabled { get; init; }
+
+    public const int MiningLabelZoomPercentMin = 100;
+    public const int MiningLabelZoomPercentMax = 200;
+    public const int MiningLabelZoomPercentStep = 10;
+
+    public int MiningLabelZoomPercent { get; init; }
 
 
     public static IReadOnlyList<int> SettingsWindowScales { get; } = new[] { 100, 110, 125, 150, 175 };
@@ -93,12 +110,12 @@ public sealed record AppSettings
 
     public string HotkeyToggleOverlay { get; init; } = string.Empty;
 
-    public string HotkeyTogglePanel { get; init; } = string.Empty;
-
     public const int TimedOverlaySecondsMin = 5;
     public const int TimedOverlaySecondsMax = 30;
 
     public string HotkeyTimedOverlay { get; init; } = string.Empty;
+
+    public string HotkeyInteractiveOverlay { get; init; } = string.Empty;
 
     public int TimedOverlaySeconds { get; init; }
 }

@@ -18,8 +18,6 @@ public sealed class CacheSettings
 
     public static readonly TimeSpan RsiMembersTimeout = RsiRequestTimeout;
 
-    public const int RsiMaxMemberPages = 400;
-
     public const int RsiMaxRedirects = 3;
 
     public static readonly TimeSpan RsiDefaultInterval = TimeSpan.FromSeconds(1);

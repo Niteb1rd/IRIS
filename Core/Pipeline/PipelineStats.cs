@@ -27,10 +27,22 @@ public sealed class PipelineStats : IContrastMaskSink
     private readonly List<double> _miningSearchMs = new();
     private readonly List<double> _miningReadMs = new();
     private int _miningLocks;
+    private int _lossNames, _lossNamesUnsure, _lossMining, _lossMiningUnsure, _lossOverCap;
     private readonly List<double> _scanReadMs = new();
     private readonly List<double> _scanMaskMs = new();
     private readonly List<double> _scanLinesMs = new();
     private readonly List<double> _scanDistanceMs = new();
+    private readonly List<double> _scanChecksMs = new();
+    private readonly List<double> _checkMaskMs = new();
+    private readonly List<double> _checkReadsMs = new();
+    private readonly List<double> _checkTemplatesMs = new();
+    private readonly List<double> _checkRestMs = new();
+    private readonly List<double> _checkEachMs = new();
+    private int _checksMost;
+    private int _checkReads, _checkReadTries, _checkReadsFound, _checkReadsNoTry, _checkFailOwnName, _checkFailOtherPlate, _checkFailOther;
+    private readonly List<double> _trackFindMs = new();
+    private readonly List<double> _trackAssignMs = new();
+    private readonly List<double> _trackRestMs = new();
     private int _scanUnavailable;
     private readonly List<double> _readMs = new();
     private readonly List<double> _trackMs = new();
@@ -46,6 +58,7 @@ public sealed class PipelineStats : IContrastMaskSink
     private int _templateKeepAlives;
     private int _templateRejects;
     private int _templateGuardRejects;
+    private int _templateMoves;
     private int _restored;
     private int _boundaryEnds;
     private int _confirmed;
@@ -164,6 +177,15 @@ public sealed class PipelineStats : IContrastMaskSink
         }
     }
 
+    public int TemplateMoves
+    {
+        get
+        {
+            lock (_gate)
+                return _templateMoves;
+        }
+    }
+
     public int TemplateGuardRejects
     {
         get
@@ -221,6 +243,23 @@ public sealed class PipelineStats : IContrastMaskSink
     {
         lock (_gate)
             _miningLocks++;
+    }
+
+    public void AddLossGroup(LossKind kind, bool unsure, bool written)
+    {
+        lock (_gate)
+        {
+            if (!written)
+                _lossOverCap++;
+            else if (kind == LossKind.Name && unsure)
+                _lossNamesUnsure++;
+            else if (kind == LossKind.Name)
+                _lossNames++;
+            else if (unsure)
+                _lossMiningUnsure++;
+            else
+                _lossMining++;
+        }
     }
 
     public void AddGameFrame(double frameMs)
@@ -301,6 +340,66 @@ public sealed class PipelineStats : IContrastMaskSink
         }
     }
 
+    public void AddScanChecks(double milliseconds)
+    {
+        lock (_gate)
+            _scanChecksMs.Add(milliseconds);
+    }
+
+    public void AddScanCheckParts(double maskMs, double readsMs, double templatesMs, double restMs, IReadOnlyCollection<double> eachMs)
+    {
+        lock (_gate)
+        {
+            _checkMaskMs.Add(maskMs);
+            _checkReadsMs.Add(readsMs);
+            _checkTemplatesMs.Add(templatesMs);
+            _checkRestMs.Add(restMs);
+            _checkEachMs.AddRange(eachMs);
+            _checksMost = Math.Max(_checksMost, eachMs.Count);
+        }
+    }
+
+    public void AddCheckTries(int tries, int failedOwnName, int failedOtherPlate, int failedOther, bool found)
+    {
+        lock (_gate)
+        {
+            _checkReads++;
+            _checkReadTries += tries;
+            if (found)
+                _checkReadsFound++;
+            if (tries == 0)
+                _checkReadsNoTry++;
+            _checkFailOwnName += failedOwnName;
+            _checkFailOtherPlate += failedOtherPlate;
+            _checkFailOther += failedOther;
+        }
+    }
+
+    public void AddTrackParts(double findMs, double assignMs, double restMs)
+    {
+        lock (_gate)
+        {
+            _trackFindMs.Add(findMs);
+            _trackAssignMs.Add(assignMs);
+            _trackRestMs.Add(restMs);
+        }
+    }
+
+    public IReadOnlyList<(string Stage, int Count, double AverageMs, double P95Ms)> TimingRows()
+    {
+        lock (_gate)
+        {
+            (string, int, double, double) Row(string stage, List<double> values) => (stage, values.Count, Average(values), LiveStats.Percentile95(values));
+            return new[]
+            {
+                Row("scan", _scanMs), Row("scan mask", _scanMaskMs), Row("scan lines", _scanLinesMs), Row("scan distance reads", _scanDistanceMs),
+                Row("scan checks", _scanChecksMs), Row("scan checks mask", _checkMaskMs), Row("scan checks reads", _checkReadsMs), Row("scan checks templates", _checkTemplatesMs),
+                Row("scan checks rest", _checkRestMs), Row("scan check each", _checkEachMs), Row("reads", _readMs), Row("tracking", _trackMs), Row("tracking find", _trackFindMs),
+                Row("tracking assign", _trackAssignMs), Row("tracking rest", _trackRestMs),
+            };
+        }
+    }
+
     public void AddLostSearchSkipped()
     {
         lock (_gate)
@@ -366,6 +465,12 @@ public sealed class PipelineStats : IContrastMaskSink
     {
         lock (_gate)
             _templateRejects++;
+    }
+
+    public void AddTemplateMove()
+    {
+        lock (_gate)
+            _templateMoves++;
     }
 
     public void AddTemplateGuardReject()
@@ -515,12 +620,14 @@ public sealed class PipelineStats : IContrastMaskSink
             var contrastShare = _contrastMaskPixels == 0 ? 0.0 : 100.0 * _contrastRulePixels / _contrastMaskPixels;
             var cap = trackingCapFps > 0 ? $"cap {trackingCapFps}" : "no cap";
             var line = string.Concat(
-                string.Create(inv, $"Live detection: {_scanMs.Count} scans in {seconds:0} s (average {Average(_scanMs):0.0} ms, p95 {LiveStats.Percentile95(_scanMs):0.0} ms, longest scan {Max(_scanMs):0.0} ms; scan region read after publish: average {Average(_scanReadMs):0.0} ms, p95 {LiveStats.Percentile95(_scanReadMs):0.0} ms, {_scanUnavailable} scan ticks without the scan region; scan parts (average / p95): text mask {Average(_scanMaskMs):0.0} / {LiveStats.Percentile95(_scanMaskMs):0.0} ms, lines and pairs {Average(_scanLinesMs):0.0} / {LiveStats.Percentile95(_scanLinesMs):0.0} ms, distance reads {Average(_scanDistanceMs):0.0} / {LiveStats.Percentile95(_scanDistanceMs):0.0} ms), "),
+                string.Create(inv, $"Live detection: {_scanMs.Count} scans in {seconds:0} s (average {Average(_scanMs):0.0} ms, p95 {LiveStats.Percentile95(_scanMs):0.0} ms, longest scan {Max(_scanMs):0.0} ms; scan region read after publish: average {Average(_scanReadMs):0.0} ms, p95 {LiveStats.Percentile95(_scanReadMs):0.0} ms, {_scanUnavailable} scan ticks without the scan region; scan parts (average / p95): text mask {Average(_scanMaskMs):0.0} / {LiveStats.Percentile95(_scanMaskMs):0.0} ms, lines and pairs {Average(_scanLinesMs):0.0} / {LiveStats.Percentile95(_scanLinesMs):0.0} ms, distance reads {Average(_scanDistanceMs):0.0} / {LiveStats.Percentile95(_scanDistanceMs):0.0} ms), scan marker checks (average / p95) {Average(_scanChecksMs):0.0} / {LiveStats.Percentile95(_scanChecksMs):0.0} ms "),
+                string.Create(inv, $"(text mask {Average(_checkMaskMs):0.0} / {LiveStats.Percentile95(_checkMaskMs):0.0} ms, lines and reads {Average(_checkReadsMs):0.0} / {LiveStats.Percentile95(_checkReadsMs):0.0} ms, templates {Average(_checkTemplatesMs):0.0} / {LiveStats.Percentile95(_checkTemplatesMs):0.0} ms, rest {Average(_checkRestMs):0.0} / {LiveStats.Percentile95(_checkRestMs):0.0} ms; one check {Average(_checkEachMs):0.00} / {LiveStats.Percentile95(_checkEachMs):0.00} ms, at most {_checksMost} checks a tick), "),
+                string.Create(inv, $"check distance reads: {_checkReadTries} lines tried in {_checkReads} checks, {_checkReadsFound} found a distance, {_checkReadsNoTry} had no line to try; failed tries: own name row {_checkFailOwnName}, another plate {_checkFailOtherPlate}, other {_checkFailOther}; "),
                 string.Create(inv, $"{_reads} plate reads in {_readTicks} of {_plateTicks} plate ticks (budget use {use:0.0} of {budget} per tick, {_saturated} ticks at the budget, average {Average(_readMs):0.0} ms, p95 {LiveStats.Percentile95(_readMs):0.0} ms, longest read tick {Max(_readMs):0.0} ms), "),
                 string.Create(inv, $"ticks skipped (worker busy): reads {_skipped[(int)PipelineGroup.Reads]}, scan {_skipped[(int)PipelineGroup.Scan]}; {_unavailable} without a picture; "),
                 string.Create(inv, $"markers tracked {markerAverage:0.0} on average, at most {_markerMax}, {markersNow} now; ended by the marker check: {_endConfirmedReads} confirmed plates by failed distance reads, {_endConfirmedNoTracking} confirmed plates by no tracking hits, {_endUnconfirmed} unconfirmed markers by checks; {_boundaryEnds} left the boundary, {_confirmed} confirmed ({confirmedNow} now), {_restored} restored, {_stopped} stopped; "),
-                string.Create(inv, $"template keep-alives {_templateKeepAlives}, template rejects (below threshold) {_templateRejects}, template guard rejects (other plate) {_templateGuardRejects}, lost plates refused (name did not match) {_lostRefused}, lost-plate searches skipped {_lostSearchesSkipped}; "),
-                string.Create(inv, $"tracking: {_trackMs.Count} ticks, average {Average(_trackMs):0.000} ms, p95 {LiveStats.Percentile95(_trackMs):0.000} ms, {share:0.0} % of {_attempts} distance lines found; "),
+                string.Create(inv, $"template keep-alives {_templateKeepAlives}, template rejects (below threshold) {_templateRejects}, template guard rejects (other plate) {_templateGuardRejects}, lost plates refused (name did not match) {_lostRefused}, lost-plate searches skipped {_lostSearchesSkipped}; lost plates moved to the template's place {_templateMoves}; "),
+                string.Create(inv, $"tracking: {_trackMs.Count} ticks, average {Average(_trackMs):0.000} ms, p95 {LiveStats.Percentile95(_trackMs):0.000} ms, {share:0.0} % of {_attempts} distance lines found; tracking parts (average / p95): line search {Average(_trackFindMs):0.000} / {LiveStats.Percentile95(_trackFindMs):0.000} ms, assignment {Average(_trackAssignMs):0.000} / {LiveStats.Percentile95(_trackAssignMs):0.000} ms, rest {Average(_trackRestMs):0.000} / {LiveStats.Percentile95(_trackRestMs):0.000} ms; "),
                 string.Create(inv, $"confirmed plates: distance line found {confirmedShare:0.0} % of {_confirmedAttempts} tracking attempts; "),
                 string.Create(inv, $"assignment: {_contested} contested frames, {_overrides} assignment overrides, "),
                 string.Create(inv, $"name-line failures: width {_nameFailed.Width}, gap {_nameFailed.Gap}, centre {_nameFailed.Centre}, not found {_nameFailed.NotFound}; colour mismatches {_colourMismatches}, low fingerprint {_lowFingerprints}; "),
@@ -529,6 +636,7 @@ public sealed class PipelineStats : IContrastMaskSink
                 string.Create(inv, $"capture: {_captureMethodText}, delay average {Average(_captureDelayMs):0.0} ms, p95 {LiveStats.Percentile95(_captureDelayMs):0.0} ms, late frames {_lateFrames}, worst {_lateWorstMs:0} ms; "),
                 string.Create(inv, $"game frames ~{gameRate:0}/s, tracked ~{trackedRate:0}/s ({cap}); "),
                 string.Create(inv, $"mining: {_miningSearchMs.Count} searches (average {Average(_miningSearchMs):0.00} ms, p95 {LiveStats.Percentile95(_miningSearchMs):0.00} ms), {_miningLocks} locks, {_miningReadMs.Count} lock reads (average {Average(_miningReadMs):0.00} ms, p95 {LiveStats.Percentile95(_miningReadMs):0.00} ms); "),
+                string.Create(inv, $"loss crops: names {_lossNames} (unsure {_lossNamesUnsure}), mining {_lossMining} (unsure {_lossMiningUnsure}), {_lossOverCap} over the folder cap; "),
                 IndexText(index),
                 CpuText(seconds * 1000.0));
             _lostRefusalText = LostRefusalSample.Text(_lostRefusalSamples);
@@ -536,11 +644,23 @@ public sealed class PipelineStats : IContrastMaskSink
             _scanMs.Clear();
             _scanMaskMs.Clear();
             _scanLinesMs.Clear();
+            _scanChecksMs.Clear();
+            _checkMaskMs.Clear();
+            _checkReadsMs.Clear();
+            _checkTemplatesMs.Clear();
+            _checkRestMs.Clear();
+            _checkEachMs.Clear();
+            _checksMost = 0;
+            _checkReads = _checkReadTries = _checkReadsFound = _checkReadsNoTry = _checkFailOwnName = _checkFailOtherPlate = _checkFailOther = 0;
+            _trackFindMs.Clear();
+            _trackAssignMs.Clear();
+            _trackRestMs.Clear();
             _scanDistanceMs.Clear();
             _lostSearchesSkipped = 0;
             _miningSearchMs.Clear();
             _miningReadMs.Clear();
             _miningLocks = 0;
+            _lossNames = _lossNamesUnsure = _lossMining = _lossMiningUnsure = _lossOverCap = 0;
             _scanReadMs.Clear();
             _scanUnavailable = 0;
             _readMs.Clear();
@@ -550,7 +670,7 @@ public sealed class PipelineStats : IContrastMaskSink
             Array.Clear(_skipped);
             Array.Clear(_busyMs);
             _endConfirmedReads = _endConfirmedNoTracking = _endUnconfirmed = _restored = 0;
-            _templateKeepAlives = _templateRejects = _templateGuardRejects = 0;
+            _templateKeepAlives = _templateRejects = _templateGuardRejects = _templateMoves = 0;
             _boundaryEnds = _confirmed = _stopped = 0;
             _markerSum = 0;
             _markerSamples = 0;

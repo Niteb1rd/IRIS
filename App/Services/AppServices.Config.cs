@@ -37,7 +37,13 @@ public sealed partial class AppServices
         switch (list.Kind)
         {
             case PollKind.Applied when list.Hash != ListFile.OwnWriteHash:
-                CurrentConfig = list.Config!;
+                var listRanks = ColorRanks.Normalize(list.Config!);
+                CurrentConfig = listRanks.Config;
+                if (listRanks.Fixed && SocialListStore.Save(Paths.SocialListFile, listRanks.Config, ListFile).Success)
+                {
+                    messages.Add(ImportResult.RanksFixedNote);
+                    Log.Write(Clock.UtcNow, $"{DataPaths.SocialListFileName}: color ranks fixed (one rank per color) and saved");
+                }
                 ListLoad = new SocialListLoadResult(list.Load!, isNew: false);
                 errorsChanged |= ClearListErrors();
                 errorsChanged |= ClearListMissing();

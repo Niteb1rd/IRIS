@@ -33,6 +33,7 @@ public partial class ConfigWindow
         if (e.NewItems is not null)
             foreach (var row in e.NewItems.OfType<INotifyPropertyChanged>())
                 row.PropertyChanged += OnRowPropertyChanged;
+        SyncRankings();
         UpdateSaveButton();
     }
 
@@ -40,9 +41,11 @@ public partial class ConfigWindow
     {
         switch (e.PropertyName)
         {
-            case nameof(ListRowViewModel.Value):
             case nameof(ListRowViewModel.Color):
-            case nameof(OrgRowViewModel.Priority):
+                SyncRankings();
+                UpdateSaveButton();
+                break;
+            case nameof(ListRowViewModel.Value):
             case nameof(RuleRowViewModel.Kind):
                 UpdateSaveButton();
                 break;

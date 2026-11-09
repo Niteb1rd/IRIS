@@ -15,12 +15,25 @@ public sealed class TrackingWorker
     private readonly HashSet<int> _crowded = new();
     private readonly List<double> _durations = new();
     private readonly Dictionary<int, (double LastMs, double SampleMs)> _crops = new();
+    private readonly Dictionary<string, int> _samplesByName = new(StringComparer.OrdinalIgnoreCase);
     private int _epoch = int.MinValue;
     private double _lastFrameMs = double.NegativeInfinity;
 
     public ITraceSink? Trace { get; set; }
 
     public Action<OpenCvSharp.Mat, string>? KeepCrop { get; set; }
+
+    public Action<LossGroup>? KeepLoss
+    {
+        get => _loss?.Emit;
+        set
+        {
+            _loss?.Dispose();
+            _loss = value is null ? null : new NameLossCapture(_settings) { Emit = value };
+        }
+    }
+
+    private NameLossCapture? _loss;
 
     public TrackingWorker(PipelineSettings settings, ILineTracker tracker, IUpdateSink sink, IMonotonicClock clock, PipelineStats? stats = null)
     {
@@ -42,6 +55,7 @@ public sealed class TrackingWorker
             _lastFrameMs = double.NegativeInfinity;
             _durations.Clear();
             _crops.Clear();
+            _loss?.Clear();
         }
 
         if (!(frame.FrameMs > _lastFrameMs))
@@ -76,6 +90,7 @@ public sealed class TrackingWorker
         var current = new Dictionary<int, MarkerRecord>();
         var inputs = new List<MarkerCandidates>();
         var handled = new Dictionary<int, (PatchPlan Plan, FrameRegion Region)>();
+        long findTicks = 0;
         foreach (var marker in tracked.OrderBy(m => m.Id))
         {
             current[marker.Id] = marker;
@@ -86,18 +101,23 @@ public sealed class TrackingWorker
             var (px, py, margin, _) = marker.Predict(frameMs, settings);
             var plan = new PatchPlan(marker.Id, region.Region, px, py, margin);
             handled[marker.Id] = (plan, region);
-            inputs.Add(new MarkerCandidates(marker, px, py, margin, RegionPlanner.ToPixelRect(region.Region), _tracker.Find(marker, plan, region.Image), marker.IsLost(frameMs, settings), width));
+            var findStarted = Stopwatch.GetTimestamp();
+            var lines = _tracker.Find(marker, plan, region.Image);
+            findTicks += Stopwatch.GetTimestamp() - findStarted;
+            inputs.Add(new MarkerCandidates(marker, px, py, margin, RegionPlanner.ToPixelRect(region.Region), lines, marker.IsLost(frameMs, settings), width));
         }
 
         var tracing = Trace is { Enabled: true };
         Dictionary<int, List<TrackCandidateNote>>? notes = tracing ? new() : null;
         var crowdedBefore = tracing ? new HashSet<int>(_crowded) : null;
+        var assignStarted = Stopwatch.GetTimestamp();
         var assignment = TrackAssigner.Assign(inputs, claimed, settings, frameMs, notes is null ? null : (id, note) =>
         {
             if (!notes.TryGetValue(id, out var list))
                 notes[id] = list = new List<TrackCandidateNote>();
             list.Add(note);
         }, inputs.Count > 0 ? KnownNames(snapshot, settings.KnownNamesMax) : null);
+        var assignTicks = Stopwatch.GetTimestamp() - assignStarted;
         foreach (var input in inputs)
         {
             if (input.Marker.Status != PlateStatus.Confirmed)
@@ -128,7 +148,12 @@ public sealed class TrackingWorker
                 if (tracing)
                     TraceMarker(frame, input, handled[marker.Id].Region.Kind, crowdedBefore!, notes!, null, null, NameEvidence.None);
                 if (confirmed)
-                    Keep(handled[marker.Id].Region, marker, input.Lost ? "lost" : "miss", frameMs, width, height);
+                {
+                    if (input.Lines.Count > 0)
+                        Keep(handled[marker.Id].Region, marker, input.Lost ? "lost" : "miss", frameMs, width, height);
+                    _loss?.Miss(snapshot, marker, handled[marker.Id].Region, frame, input.PredictedX + marker.Width / 2.0, input.PredictedY);
+                }
+
                 continue;
             }
 
@@ -153,8 +178,11 @@ public sealed class TrackingWorker
             updates.Add(new TrackingHitUpdate(PipelineGroup.Tracking, frameMs, epoch, marker.Id, position.CentreX, position.Top, position.Width, distanceWidth, error, nameSeen));
             _matched[marker.Id] = true;
             if (confirmed)
+            {
                 Keep(region, marker, evidence switch { NameEvidence.Partial => "partial", NameEvidence.Anchored => "fromname", NameEvidence.Unverified => "alone", _ => "sample" },
                     frameMs, width, height);
+                _loss?.Hit(snapshot, current[marker.Id], region, frame, predictedCentre, input.PredictedY, evidence, width, height);
+            }
         }
 
         _stats?.AddAssignment(assignment.Contested, assignment.Overrides, assignment.NameFailures, assignment.ColourMismatches, assignment.LowFingerprints, assignment.LostRefused);
@@ -174,6 +202,8 @@ public sealed class TrackingWorker
                 _stats?.AddBoundaryEnd();
             }
         }
+
+        _loss?.EndTick(snapshot, frameMs, ended, settings);
 
         var nowMs = _clock.NowMs;
         var plans = RegionPlanner.PlanTick(current.Where(kv => !ended.Contains(kv.Key)).Select(kv => kv.Value), WantsNameRow, frameMs, interval, width, height, settings,
@@ -203,6 +233,9 @@ public sealed class TrackingWorker
         _crowded.RemoveWhere(id => snapshot.Find(id) is null || ended.Contains(id));
 
         var elapsedMs = (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
+        var findMs = findTicks * 1000.0 / Stopwatch.Frequency;
+        var assignMs = assignTicks * 1000.0 / Stopwatch.Frequency;
+        var restMs = Math.Max(0.0, elapsedMs - findMs - assignMs);
         _durations.Add(elapsedMs);
         while (_durations.Count > settings.TrackingTimesKept)
             _durations.RemoveAt(0);
@@ -212,7 +245,7 @@ public sealed class TrackingWorker
         if (tracing && Trace.Line(nowMs, "trk", "tick") is { } tick)
         {
             tick.Int("seq", frame.Sequence).Num("fms", frameMs).Int("tracked", tracked.Count).Int("patches", inputs.Count).Int("claimed", claimed.Count)
-                .Bool("contested", assignment.Contested).Int("found", found).Num("ms", elapsedMs, 3).Num("published", frame.PublishedMs).Array("noPatch");
+                .Bool("contested", assignment.Contested).Int("found", found).Num("ms", elapsedMs, 3).Num("findMs", findMs, 3).Num("assignMs", assignMs, 3).Num("restMs", restMs, 3).Num("published", frame.PublishedMs).Array("noPatch");
             foreach (var marker in tracked)
                 if (!handled.ContainsKey(marker.Id))
                     tick.Item().Int("mid", marker.Id).Bool("matchedLast", _matched.GetValueOrDefault(marker.Id, true));
@@ -225,7 +258,10 @@ public sealed class TrackingWorker
         _stats?.AddMarkers(current.Count - ended.Count);
         _stats?.AddTrackedFrame();
         if (attempts > 0)
+        {
             _stats?.AddTrackTick(elapsedMs, attempts, found, confirmedAttempts, confirmedFound);
+            _stats?.AddTrackParts(findMs, assignMs, restMs);
+        }
         return true;
     }
 
@@ -258,9 +294,17 @@ public sealed class TrackingWorker
         var (lastMs, sampleMs) = _crops.TryGetValue(marker.Id, out var times) ? times : (double.NegativeInfinity, double.NegativeInfinity);
         if (frameMs - lastMs < _settings.TrackCropEveryMs || (reason == "sample" && frameMs - sampleMs < _settings.TrackCropSampleEveryMs))
             return;
+        var name = new string((marker.Name ?? "unknown").Select(c => char.IsLetterOrDigit(c) || c is '_' or '-' ? c : '_').ToArray());
+        if (reason == "sample")
+        {
+            var samples = _samplesByName.GetValueOrDefault(name);
+            if (samples >= _settings.TrackCropSamplesPerName)
+                return;
+            _samplesByName[name] = samples + 1;
+        }
+
         _crops[marker.Id] = (frameMs, reason == "sample" ? frameMs : sampleMs);
         var r = region.Region;
-        var name = new string((marker.Name ?? "unknown").Select(c => char.IsLetterOrDigit(c) || c is '_' or '-' ? c : '_').ToArray());
         keep(region.Image, string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{marker.Id}_{name}_{reason}_x{r.X}y{r.Y}w{r.Width}h{r.Height}_win{windowWidth}x{windowHeight}"));
     }
 
@@ -307,8 +351,16 @@ public sealed class TrackingWorker
 
         t.EndArray();
         if (line is not null && position is { } p)
+        {
+            var lh = Math.Max(1.0, m.Height);
+            var dx = p.CentreX - (input.PredictedX + m.Width / 2.0);
+            var dy = p.Top - input.PredictedY;
+            var patch = input.Patch;
+            var reach = Math.Max(0.0, Math.Min(Math.Min(input.PredictedX - patch.X, patch.Right - (input.PredictedX + m.Width)), patch.Bottom - (input.PredictedY + m.Height)));
             t.Box("hit", line.Box).Bool("partial", line.IsPartial).Bool("union", line.IsUnion).Num("hitCx", p.CentreX).Num("hitTop", p.Top).Num("hitW", p.Width)
-                .Num("jump", Math.Sqrt((p.CentreX - m.CentreX) * (p.CentreX - m.CentreX) + (p.Top - m.Top) * (p.Top - m.Top)), 1);
+                .Num("jump", Math.Sqrt((p.CentreX - m.CentreX) * (p.CentreX - m.CentreX) + (p.Top - m.Top) * (p.Top - m.Top)), 1)
+                .Num("lostMs", frame.FrameMs - m.LastFoundMs, 1).Num("distLh", Math.Sqrt(dx * dx + dy * dy) / lh, 2).Num("marginLh", input.Margin / lh, 2).Num("reachLh", reach / lh, 2);
+        }
         else
             t.Bool("miss", true);
         Trace!.Write(t.Text());

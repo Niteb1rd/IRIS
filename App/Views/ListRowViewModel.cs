@@ -145,17 +145,8 @@ public sealed class PlayerRowViewModel : ListRowViewModel
 
 public sealed class OrgRowViewModel : ListRowViewModel
 {
-    private int _priority;
-
-    public OrgRowViewModel(string sid, int priority, OverlayColor color)
+    public OrgRowViewModel(string sid, OverlayColor color)
         : base(sid, color)
     {
-        _priority = priority;
-    }
-
-    public int Priority
-    {
-        get => _priority;
-        set => Set(ref _priority, value);
     }
 }

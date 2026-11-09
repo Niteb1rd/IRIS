@@ -14,6 +14,7 @@ public sealed class StartupMilestones
     private int _rsiFailed;
     private int _bracket;
     private int _mining;
+    private int _aberration;
 
     public StartupMilestones(ILog log, IClock clock)
     {
@@ -55,6 +56,10 @@ public sealed class StartupMilestones
     public void BracketDrawn() => Once(ref _bracket, "overlay works, first bracket drawn");
 
     public void MiningSignalFound(string text) => Once(ref _mining, "first mining signal found: " + text);
+
+    public void AberrationDetected() => Once(ref _aberration, "chromatic aberration is on in the game's graphics settings (names read better with it off)");
+
+    public bool AberrationSeen => Volatile.Read(ref _aberration) != 0;
 
     private void Once(ref int flag, string text)
     {

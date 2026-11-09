@@ -159,6 +159,7 @@ public partial class ConfigWindow
         var problems = new List<string>();
         CollectNameProblems("Players", _players, RowValidator.CheckHandleFormat, problems);
         CollectNameProblems("Orgs", _orgs, RowValidator.CheckSidFormat, problems);
+        var firstRow = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < _rules.Count; i++)
         {
             var rule = _rules[i];
@@ -166,6 +167,9 @@ public partial class ConfigWindow
                 problems.Add($"Org-Attribute, row {i + 1}: the {Choices.DisplayName(rule.Kind)} rule needs a value.");
             else if (!rule.IsValueAcceptable)
                 problems.Add($"Org-Attribute, row {i + 1}: \"{rule.Value}\" is not a known {Choices.DisplayName(rule.Kind)} value. Pick one from the list.");
+            else if (!firstRow.TryAdd(OrgRuleValues.RuleKey(rule.Kind, rule.Value), i + 1))
+                problems.Add($"Org-Attribute, row {i + 1}: the same rule as row {firstRow[OrgRuleValues.RuleKey(rule.Kind, rule.Value)]}"
+                    + (rule.NeedsValue ? $" ({Choices.DisplayName(rule.Kind)} {rule.Value.Trim()})" : $" ({Choices.DisplayName(rule.Kind)})") + ". Remove one of them.");
         }
 
         if (problems.Count > 0)
@@ -342,9 +346,9 @@ public partial class ConfigWindow
         foreach (var p in _players)
             config.Players.Add(new PlayerEntry(p.Value.Trim(), p.Color));
         foreach (var o in _orgs)
-            config.Orgs.Add(new OrgEntry(o.Value.Trim(), o.Priority, o.Color));
+            config.Orgs.Add(new OrgEntry(o.Value.Trim(), ColorRanks.RankOf(_orgRanking, o.Color), o.Color));
         foreach (var r in _rules.Where(rule => !rule.IsNoMatch))
-            config.OrgRules.Add(new OrgAttributeRule(r.Kind, r.NeedsValue ? r.Value.Trim() : null, r.Priority, r.Color));
+            config.OrgRules.Add(new OrgAttributeRule(r.Kind, r.NeedsValue ? r.Value.Trim() : null, ColorRanks.RankOf(_ruleRanking, r.Color), r.Color));
         var noMatch = _rules.FirstOrDefault(rule => rule.IsNoMatch);
         config.OrgRules.Add(new OrgAttributeRule(
             AttributeKind.NoMatch, null, NoMatchRule.Priority, noMatch?.Color ?? NoMatchRule.DefaultColor));
@@ -355,8 +359,9 @@ public partial class ConfigWindow
     {
         var lines = new List<string>();
         lines.AddRange(_players.Select(p => $"P|{p.Value.Trim()}|{p.Color}"));
-        lines.AddRange(_orgs.Select(o => $"O|{o.Value.Trim()}|{o.Priority}|{o.Color}"));
-        lines.AddRange(_rules.Select(r => $"R|{r.Kind}|{(r.NeedsValue ? r.Value.Trim() : string.Empty)}|{r.Priority}|{r.Color}"));
+        lines.AddRange(_orgs.Select(o => $"O|{o.Value.Trim()}|{o.Color}"));
+        lines.AddRange(_rules.Select(r => $"R|{r.Kind}|{(r.NeedsValue ? r.Value.Trim() : string.Empty)}|{r.Color}"));
+        lines.Add("K|" + string.Join(",", _orgRanking) + "|" + string.Join(",", _ruleRanking));
         lines.Add($"F|{OrgsMainOnlyCheck.IsChecked == true}|{RulesMainOnlyCheck.IsChecked == true}");
         return string.Join("\n", lines);
     }

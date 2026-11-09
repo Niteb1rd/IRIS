@@ -4,7 +4,7 @@ using Iris.Core.Overlay;
 
 namespace Iris.Core.Pipeline;
 
-public readonly record struct TrackSample(double Ms, double X, double Y);
+public readonly record struct TrackSample(double Ms, double X, double Y, bool Template = false);
 
 public sealed record MarkerIdentity(string Handle, MatchKind Kind, OverlayColor Color, PanelOrgs Orgs, RsiState Rsi = RsiState.Pending);
 
@@ -116,11 +116,11 @@ public sealed record MarkerRecord(int Id, double BornMs)
             return Limit(Velocity(Post0, Post1), maxPxPerMs);
         if (Post1 is null)
             return (0.0, 0.0);
-        return Limit(Fit(Recent, windowMs, OffsetMs), maxPxPerMs);
+        return Limit(Fit(Recent, windowMs, OffsetMs, hitsOnly: true), maxPxPerMs);
     }
 
     public (double Vx, double Vy) TrackingVelocity(double windowMs = 0.0, double maxPxPerMs = double.PositiveInfinity) =>
-        Limit(windowMs > 0.0 ? Fit(Recent, windowMs, double.NegativeInfinity) : Velocity(Hist0, Hist1), maxPxPerMs);
+        Limit(windowMs > 0.0 && Hist1 is not { Template: true } ? Fit(Recent, windowMs, double.NegativeInfinity) : Velocity(Hist0, Hist1), maxPxPerMs);
 
     public double MaxSpeedPxPerMs(PipelineSettings settings) => settings.MaxSpeedLinesPerMs * Height;
 
@@ -137,7 +137,7 @@ public sealed record MarkerRecord(int Id, double BornMs)
         var displacement = Math.Sqrt(vx * lookMs * (vx * lookMs) + vy * lookMs * (vy * lookMs));
         var lost = lostGrowth && IsLost(nowMs, settings);
         var growPerSec = lost ? Math.Max(settings.SearchGrowLinesPerSec, settings.LostSearchGrowLinesPerSec) : settings.SearchGrowLinesPerSec;
-        var maxLines = lost ? Math.Max(settings.SearchMaxLines, settings.LostSearchMaxLines) : settings.SearchMaxLines;
+        var maxLines = lost ? settings.LostSearchMaxLines : settings.SearchMaxLines;
         var margin = Math.Min(Height * (settings.SearchBaseLines + growPerSec * dt) + settings.PredictionErrorGain * PredictionErrorPx, Height * maxLines)
             + settings.VelocityGain * displacement;
         return (px, py, margin, dt);
@@ -149,14 +149,14 @@ public sealed record MarkerRecord(int Id, double BornMs)
     public MarkerRecord WithLineBox(double ms, PixelRect line, PipelineGroup? by = null) =>
         this with { CentreX = line.X + line.Width / 2.0, Top = line.Y, Width = line.Width, DistanceWidth = line.Width, Height = line.Height, LineMs = ms, LineBy = by ?? LineBy };
 
-    public MarkerRecord WithSamples(double ms, double centreX, double top, PipelineGroup? by = null)
+    public MarkerRecord WithSamples(double ms, double centreX, double top, PipelineGroup? by = null, bool template = false)
     {
-        var sample = new TrackSample(ms, centreX, top);
+        var sample = new TrackSample(ms, centreX, top, template);
         var recent = new TrackSample[Math.Min(Recent.Length + 1, RecentSamples)];
         Array.Copy(Recent, Recent.Length + 1 - recent.Length, recent, 0, recent.Length - 1);
         recent[^1] = sample;
         var record = this with { Hist0 = Hist1, Hist1 = sample, Recent = recent, SamplesBy = by ?? SamplesBy };
-        return MarkedConfirmed ? record with { Post0 = Post1, Post1 = sample } : record;
+        return MarkedConfirmed && !template ? record with { Post0 = Post1, Post1 = sample } : record;
     }
 
     public MarkerRecord WithFound(double ms) => ms > LastFoundMs ? this with { LastFoundMs = ms } : this;
@@ -164,15 +164,18 @@ public sealed record MarkerRecord(int Id, double BornMs)
     public MarkerRecord AfterHit(double ms, double centreX, double top, double width, double distanceWidth = double.NaN) =>
         WithLine(ms, centreX, top, width, distanceWidth).WithSamples(ms, centreX, top).WithFound(ms);
 
-    private static (double Vx, double Vy) Fit(TrackSample[] samples, double windowMs, double sinceMs)
+    private static (double Vx, double Vy) Fit(TrackSample[] samples, double windowMs, double sinceMs, bool hitsOnly = false)
     {
         if (samples.Length < 2)
             return (0.0, 0.0);
-        var newest = samples[^1].Ms;
+        var newest = double.NegativeInfinity;
+        foreach (var s in samples)
+            if (!(hitsOnly && s.Template))
+                newest = Math.Max(newest, s.Ms);
         double n = 0, st = 0, sx = 0, sy = 0;
         foreach (var s in samples)
         {
-            if (s.Ms < newest - windowMs || s.Ms < sinceMs)
+            if (s.Ms < newest - windowMs || s.Ms < sinceMs || (hitsOnly && s.Template))
                 continue;
             n++;
             st += s.Ms;
@@ -188,7 +191,7 @@ public sealed record MarkerRecord(int Id, double BornMs)
         double stt = 0, stx = 0, sty = 0;
         foreach (var s in samples)
         {
-            if (s.Ms < newest - windowMs || s.Ms < sinceMs)
+            if (s.Ms < newest - windowMs || s.Ms < sinceMs || (hitsOnly && s.Template))
                 continue;
             var dt = s.Ms - mt;
             stt += dt * dt;

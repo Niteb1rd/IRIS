@@ -37,6 +37,8 @@ public sealed partial class NameplateDetector : IDisposable
     private readonly Mat _bright = new();
     private readonly Mat _limit = new();
     private readonly Mat _ink = new();
+    private readonly Mat _valueHat = new();
+    private Rect _valueHatArea;
     private readonly Mat _hatLimits;
     private int[] _statsBuffer = Array.Empty<int>();
     private Mat? _narrowFillMask;
@@ -59,9 +61,11 @@ public sealed partial class NameplateDetector : IDisposable
 
     public IContrastMaskSink? ContrastSink { get; set; }
 
+    public LayerCheck? Layers { get; set; }
+
     public double LastMaskMs { get; private set; }
 
-    private DistanceReading? ReadDistance(Mat bgr, Rect box) => ReadDistance(NameplateFeatures.CreateMask(bgr, box));
+    private DistanceReading? ReadDistance(Mat bgr, Rect box) => ReadDistance(NameplateFeatures.CreateMask(bgr, box, layers: Layers));
 
     private DistanceReading? ReadDistance(LineMask? mask)
     {
@@ -71,10 +75,8 @@ public sealed partial class NameplateDetector : IDisposable
         return DistanceLineRule.Evaluate(read, _settings, piece => _reader.IsOpenBracket(mask, piece.Start, piece.End, _settings.BracketMinScore));
     }
 
-    public NameplateCandidates FindCandidates(Mat bgr) => FindCandidates(bgr, null);
 
-
-    public NameplateCandidates FindCandidates(Mat bgr, IReadOnlyList<Rect>? blanks)
+    public NameplateCandidates FindCandidates(Mat bgr)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (bgr.Empty() || bgr.Depth() != MatType.CV_8U || (bgr.Channels() != 3 && bgr.Channels() != 4))
@@ -99,7 +101,6 @@ public sealed partial class NameplateDetector : IDisposable
 
         using var region = new Mat(bgr, new Rect(px0, y0, px1 - px0, y1 - y0));
         BuildColorMask(region, scaleHeight);
-        BlankMask(blanks, px0, y0);
         LastMaskMs = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         var narrowShapes = new List<Rect>();
         var lines = FindTextLines(scaleHeight, narrowShapes);
@@ -179,7 +180,9 @@ public sealed partial class NameplateDetector : IDisposable
         if (bgr.Empty() || bgr.Depth() != MatType.CV_8U || bgr.Channels() != 3)
             throw new ArgumentException("Expected a non-empty 8 bit BGR image.", nameof(bgr));
         var scaleHeight = _settings.EffectiveScaleHeight(bgr.Height);
+        var maskStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         BuildColorMask(bgr, scaleHeight);
+        LastMaskMs = System.Diagnostics.Stopwatch.GetElapsedTime(maskStarted).TotalMilliseconds;
         var narrow = withNarrowRows ? new List<Rect>() : null;
         var lines = FindTextLines(scaleHeight, narrow);
         realCount = lines.Count;
@@ -287,13 +290,13 @@ public sealed partial class NameplateDetector : IDisposable
     public NameRowRead ReadNameRow(Mat bgr, Rect box)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return ReadNameRow(bgr, NameplateFeatures.CreateMask(bgr, box, keepColors: true));
+        return ReadNameRow(bgr, NameplateFeatures.CreateMask(bgr, box, keepColors: true, layers: Layers));
     }
 
     public bool ReadsAsNameNotDistance(Mat bgr, Rect box)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var mask = NameplateFeatures.CreateMask(bgr, box, keepColors: true);
+        var mask = NameplateFeatures.CreateMask(bgr, box, keepColors: true, layers: Layers);
         return ReadNameRow(bgr, mask).Usable && ReadDistance(mask) is null;
     }
 
@@ -336,7 +339,7 @@ public sealed partial class NameplateDetector : IDisposable
         if (_disposed)
             return;
         _disposed = true;
-        foreach (var mat in new[] { _blue, _green, _red, _hat, _hatBits, _cyanWhite, _redMask, _greenMask, _scratch, _mask, _kept, _labelHit, _maskLabels, _joined, _labels, _stats, _centroids, _value, _bgSmall, _bgBlur, _background, _bright, _limit, _ink, _hatLimits })
+        foreach (var mat in new[] { _blue, _green, _red, _hat, _hatBits, _cyanWhite, _redMask, _greenMask, _scratch, _mask, _kept, _labelHit, _maskLabels, _joined, _labels, _stats, _centroids, _value, _bgSmall, _bgBlur, _background, _bright, _limit, _ink, _valueHat, _hatLimits })
             mat.Dispose();
         foreach (var kernel in _kernels.Values)
             kernel.Dispose();

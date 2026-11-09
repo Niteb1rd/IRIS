@@ -178,6 +178,7 @@ public static class SocialConfigToml
         }
 
         OrgAttributeRule? noMatch = null;
+        var ruleAt = new Dictionary<string, (int Index, string Path)>(StringComparer.OrdinalIgnoreCase);
         foreach (var (t, path) in Tables(root, "org_rules", errors))
         {
             var kindText = GetString(t, "kind", path, errors);
@@ -224,7 +225,27 @@ public static class SocialConfigToml
             }
             if (!needsValue && value is not null)
                 warnings.Add($"{path}.value: ignored for kind \"{kindText}\".");
-            config.OrgRules.Add(new OrgAttributeRule(kind.Value, needsValue ? value : null, prio!.Value, color.Value));
+            var rule = new OrgAttributeRule(kind.Value, needsValue ? value : null, prio!.Value, color.Value);
+
+            var key = OrgRuleValues.RuleKey(rule);
+            if (ruleAt.TryGetValue(key, out var kept))
+            {
+                if (rule.Priority < config.OrgRules[kept.Index].Priority)
+                {
+                    warnings.Add($"{kept.Path}: the same rule as {path}, whose color has the higher rank; only {path} is kept.");
+                    config.OrgRules[kept.Index] = rule;
+                    ruleAt[key] = (kept.Index, path);
+                }
+                else
+                {
+                    warnings.Add($"{path}: the same rule as {kept.Path}; only {kept.Path} is kept.");
+                }
+
+                continue;
+            }
+
+            ruleAt[key] = (config.OrgRules.Count, path);
+            config.OrgRules.Add(rule);
         }
 
         config.OrgRules.Add(noMatch ?? NoMatchRule.CreateDefault());
@@ -281,7 +302,7 @@ public static class SocialConfigToml
         }
         if (p < 1 || p > 9)
         {
-            errors.Add($"{path}.priority: {p} must be between 1 (highest) and 9.");
+            errors.Add($"{path}.priority: {p} must be a color rank between 1 (highest) and 9.");
             return null;
         }
         return (int)p;

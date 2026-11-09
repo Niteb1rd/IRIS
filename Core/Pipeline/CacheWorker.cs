@@ -23,6 +23,7 @@ public sealed class CacheWorker : IDisposable
     private readonly LruCache<string, Known> _known;
     private readonly LruCache<string, NameAnswer> _provisional;
     private readonly Dictionary<string, (NameAnswer Answer, MarkerIdentity Identity)> _identities = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<(int Epoch, int Id)> _sightings = new();
     private readonly Queue<string> _queue = new();
     private readonly HashSet<string> _queued = new(StringComparer.OrdinalIgnoreCase);
     private readonly Queue<(string Sid, string Name)> _orgQueue = new();
@@ -79,6 +80,15 @@ public sealed class CacheWorker : IDisposable
                 continue;
             _wanted.Add(name);
             var identity = IdentityOf(name, Resolve(name, nowMs), config);
+            if (identity.Rsi == RsiState.Verified && _source is not null && _sightings.Add((snapshot.Epoch, marker.Id)))
+            {
+                if (_sightings.Count > _live.CacheRemembered)
+                {
+                    _sightings.Clear();
+                    _sightings.Add((snapshot.Epoch, marker.Id));
+                }
+                _source.NoteSeenOnPlate(name);
+            }
             if (marker.Identity != identity)
             {
                 updates.Add(new IdentityUpdate(PipelineGroup.Cache, marker.NameMs, snapshot.Epoch, marker.Id, identity));

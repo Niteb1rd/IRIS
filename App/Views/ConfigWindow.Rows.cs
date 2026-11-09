@@ -34,14 +34,14 @@ public partial class ConfigWindow
 
     private void OnAddOrg(object sender, RoutedEventArgs e)
     {
-        var row = new OrgRowViewModel(string.Empty, Choices.DefaultPriority, OverlayColor.Red);
+        var row = new OrgRowViewModel(string.Empty, OverlayColor.Red);
         _orgs.Add(row);
         FocusNewRow(OrgsList, row);
     }
 
     private void OnAddRule(object sender, RoutedEventArgs e)
     {
-        var row = new RuleRowViewModel(AttributeKind.Archetype, null, Choices.DefaultPriority, OverlayColor.Orange);
+        var row = new RuleRowViewModel(AttributeKind.Archetype, null, OverlayColor.Orange);
         var noMatchIndex = _rules.Count;
         while (noMatchIndex > 0 && _rules[noMatchIndex - 1].IsNoMatch)
             noMatchIndex--;

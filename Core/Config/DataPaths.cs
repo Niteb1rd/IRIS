@@ -50,6 +50,8 @@ public sealed class DataPaths
 
     public string MiningFile => Path.Combine(ConfigFolder, MiningFileName);
 
+    public string DossierNotesFile => Path.Combine(ConfigFolder, DossierNotes.FileName);
+
     public string CacheFile => Path.Combine(DataFolder, CacheFileName);
 
     public bool IsOwnConfigFile(string path)

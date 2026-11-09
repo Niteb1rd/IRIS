@@ -22,7 +22,7 @@ public static class NameplateFeatures
         public static readonly Mat Open = Cv2.GetStructuringElement(MorphShapes.Rect, new Size(1, 3));
     }
 
-    public static LineMask? CreateMask(Mat bgr, Rect box, double? threshold = null, int pad = 2, bool keepColors = false)
+    public static LineMask? CreateMask(Mat bgr, Rect box, double? threshold = null, int pad = 2, bool keepColors = false, LayerCheck? layers = null)
     {
         if (bgr.Empty() || bgr.Depth() != MatType.CV_8U || bgr.Channels() != 3)
             throw new ArgumentException("Expected a non-empty 8 bit BGR image.", nameof(bgr));
@@ -35,10 +35,10 @@ public static class NameplateFeatures
             return null;
 
         using var crop = new Mat(bgr, new Rect(x0, y0, x1 - x0, y1 - y0));
-        return CreateMaskFromCrop(crop, threshold, x0, y0, keepColors);
+        return CreateMaskFromCrop(crop, threshold, x0, y0, keepColors, layers);
     }
 
-    public static LineMask? CreateMask(byte[] bgr, int width, int height, int stride, Rect box, double? threshold = null, int pad = 2, bool keepColors = false)
+    public static LineMask? CreateMask(byte[] bgr, int width, int height, int stride, Rect box, double? threshold = null, int pad = 2, bool keepColors = false, LayerCheck? layers = null)
     {
         if (width <= 0 || height <= 0 || stride < width * 3 || bgr.Length < (height - 1) * stride + width * 3)
             throw new ArgumentException("The buffer is smaller than width, height and stride say.", nameof(bgr));
@@ -55,10 +55,10 @@ public static class NameplateFeatures
         using var crop = new Mat(h, w, MatType.CV_8UC3);
         for (var y = 0; y < h; y++)
             Marshal.Copy(bgr, (y0 + y) * stride + x0 * 3, crop.Data + y * w * 3, w * 3);
-        return CreateMaskFromCrop(crop, threshold, x0, y0, keepColors);
+        return CreateMaskFromCrop(crop, threshold, x0, y0, keepColors, layers);
     }
 
-    private static LineMask? CreateMaskFromCrop(Mat crop, double? threshold, int originX, int originY, bool keepColors)
+    private static LineMask? CreateMaskFromCrop(Mat crop, double? threshold, int originX, int originY, bool keepColors, LayerCheck? layers)
     {
         using var big = new Mat();
         Cv2.Resize(crop, big, new Size(0, 0), Scale, Scale, InterpolationFlags.Cubic);
@@ -67,17 +67,24 @@ public static class NameplateFeatures
         using var topHat = new Mat();
         try
         {
-            using var one = new Mat();
-            for (var i = 0; i < channels.Length; i++)
+            foreach (var c in channels)
+                Cv2.MorphologyEx(c, c, MorphTypes.TopHat, Kernels.TopHat);
+            using var high = new Mat();
+            Cv2.Max(channels[0], channels[1], high);
+            Cv2.Max(high, channels[2], topHat);
+            if (layers is { Active: true })
             {
-                if (i == 0)
+                using var low = new Mat();
+                using var middle = new Mat();
+                Cv2.Min(channels[0], channels[1], low);
+                Cv2.Min(high, channels[2], middle);
+                Cv2.Max(middle, low, middle);
+                if (IsMultiLayerText(topHat, middle))
                 {
-                    Cv2.MorphologyEx(channels[i], topHat, MorphTypes.TopHat, Kernels.TopHat);
-                }
-                else
-                {
-                    Cv2.MorphologyEx(channels[i], one, MorphTypes.TopHat, Kernels.TopHat);
-                    Cv2.Max(topHat, one, topHat);
+                    var shifted = HasShiftedLayers(channels[2], channels[0]);
+                    layers.Note(shifted);
+                    if (shifted && layers.Rule == LayerRule.Agree)
+                        middle.CopyTo(topHat);
                 }
             }
         }
@@ -134,6 +141,33 @@ public static class NameplateFeatures
         }
 
         return TrimToText(data, h, w, originX, originY, colors);
+    }
+
+    public const double MultiLayerShare = 0.5;
+
+    public const double LayerShiftMinPx = 0.6, LayerShiftMaxPx = 3.5, LayerShiftMinResponse = 0.5;
+
+    private static bool IsMultiLayerText(Mat brightest, Mat second)
+    {
+        using var ink = new Mat();
+        var otsu = Cv2.Threshold(brightest, ink, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+        Cv2.Threshold(brightest, ink, Math.Clamp(otsu, 25.0, 90.0), 255, ThresholdTypes.Binary);
+        return Cv2.CountNonZero(ink) > 0 && Cv2.Mean(second, ink).Val0 >= MultiLayerShare * Cv2.Mean(brightest, ink).Val0;
+    }
+
+    private static bool HasShiftedLayers(Mat red, Mat blue)
+    {
+        if (red.Width < 8 || red.Height < 8)
+            return false;
+        using var r = new Mat();
+        using var b = new Mat();
+        using var window = new Mat();
+        red.ConvertTo(r, MatType.CV_32F);
+        blue.ConvertTo(b, MatType.CV_32F);
+        Cv2.CreateHanningWindow(window, red.Size(), MatType.CV_32F);
+        var shift = Cv2.PhaseCorrelate(r, b, window, out var response);
+        var px = Math.Sqrt(shift.X * shift.X + shift.Y * shift.Y) / Scale;
+        return response >= LayerShiftMinResponse && px >= LayerShiftMinPx && px <= LayerShiftMaxPx;
     }
 
     internal static LineMask? TrimToText(byte[] data, int h, int w, int originX = 0, int originY = 0, byte[]? colors4x = null)

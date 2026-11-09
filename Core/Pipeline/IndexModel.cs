@@ -69,9 +69,13 @@ public static class IndexModel
         return (marker.CentreX + vx * dt * scale, marker.Top + vy * dt * scale);
     }
 
-    public static OverlayModel ModelAt(IndexSnapshot snapshot, double nowMs, PipelineSettings pipe, LiveSettings live, OverlayModel? previous = null)
+    public static OverlayModel ModelAt(IndexSnapshot snapshot, double nowMs, PipelineSettings pipe, LiveSettings live, OverlayModel? previous = null, double? panelKeepMs = null)
     {
-        var note = snapshot.BlankPictureNote ? BlankPictureWatch.NoteText : snapshot.LateFrameNote ? LateFrameWindow.NoteText : null;
+        var keepMs = panelKeepMs ?? pipe.PanelStaleMs;
+        var note = snapshot.BlankPictureNote ? BlankPictureWatch.NoteText
+            : snapshot.LateFrameNote ? LateFrameWindow.NoteText
+            : snapshot.AberrationNote ? AberrationWatch.NoteText
+            : null;
         var mining = MiningItem(snapshot);
         if (snapshot.Markers.Count == 0 && snapshot.RecentlyEnded.Count == 0)
             return NoteOnly(note, mining, previous);
@@ -81,7 +85,7 @@ public static class IndexModel
         var withheld = WithheldDuplicates(snapshot.Markers);
         foreach (var marker in snapshot.Markers)
         {
-            if (!IsListed(marker) || nowMs - marker.LastFoundMs > pipe.PanelStaleMs)
+            if (!IsListed(marker) || nowMs - marker.LastFoundMs > keepMs)
                 continue;
             listed.Add(marker);
             if (!IsDrawable(marker, nowMs, pipe) || (withheld is not null && withheld.Contains(marker.Id)))
@@ -97,7 +101,7 @@ public static class IndexModel
 
         foreach (var ended in snapshot.RecentlyEnded)
         {
-            if (nowMs - ended.LastFoundMs <= pipe.PanelStaleMs)
+            if (nowMs - ended.LastFoundMs <= keepMs)
                 listed.Add(ended);
         }
 

@@ -96,5 +96,16 @@ public sealed class RefresherNameSource : INameSource
 
     public void SetLiveWaiting(int count) => _refresher.SetLiveWaiting(count);
 
+    public void NoteSeenOnPlate(string name)
+    {
+        try
+        {
+            _database.NoteSeenOnPlate(name, _clock.UtcNow);
+        }
+        catch (Exception ex) when (ex is DbException or InvalidOperationException or InvalidDataException)
+        {
+        }
+    }
+
     private IReadOnlyList<OrgMembership> WithCachedAttributes(IReadOnlyList<OrgMembership> orgs) => _refresher.WithCachedAttributes(orgs);
 }

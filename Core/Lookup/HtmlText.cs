@@ -22,15 +22,15 @@ internal static class HtmlText
 public static class OrgVocabulary
 {
     public static readonly IReadOnlyList<string> Archetypes =
-        new[] { "PMC", "Syndicate", "Corporation", "Organization", "Faith", "Club" };
+        new[] { "Club", "Corporation", "Faith", "Organization", "PMC", "Syndicate" };
 
     public static readonly IReadOnlyList<string> Commitments =
         new[] { "Casual", "Regular", "Hardcore" };
 
     public static readonly IReadOnlyList<string> Activities = new[]
     {
-        "Security", "Resources", "Exploration", "Smuggling", "Piracy", "Social", "Freelancing",
-        "Trading", "Transport", "Scouting", "Medical", "Engineering", "Bounty Hunting", "Data Running",
+        "Bounty Hunting", "Data Running", "Engineering", "Exploration", "Freelancing", "Infiltration", "Medical",
+        "Piracy", "Resources", "Scouting", "Security", "Smuggling", "Social", "Trading", "Transport",
     };
 
     public const string Exclusive = "Exclusive";

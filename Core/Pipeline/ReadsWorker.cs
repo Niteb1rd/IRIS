@@ -9,7 +9,7 @@ public sealed class ReadsWorker
 {
     private sealed record PendingTick(long Tag, long Tick, int Candidates, int Budget);
 
-    private sealed record KeptRead(OpenCvSharp.Mat Image, string Text, OpenCvSharp.Rect Region, int WindowWidth, int WindowHeight, bool Informative);
+    private sealed record KeptRead(OpenCvSharp.Mat Image, string Text, string? Name, OpenCvSharp.Rect Region, int WindowWidth, int WindowHeight);
 
     private readonly PipelineSettings _settings;
     private readonly PlateNameJudge _judge;
@@ -24,6 +24,7 @@ public sealed class ReadsWorker
     private readonly IMonotonicClock _clock;
     private readonly Dictionary<int, PlateState> _states = new();
     private readonly Dictionary<int, List<KeptRead>> _kept = new();
+    private int _unknownCropsHanded;
     private readonly HashSet<string> _confirmedLogged = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<SessionMemoryEntry> _memory = Array.Empty<SessionMemoryEntry>();
     private PendingTick? _pending;
@@ -139,6 +140,12 @@ public sealed class ReadsWorker
             return;
         _pending = null;
         ForgetEnded(snapshot);
+        if (Ops.Layers is { } layers)
+        {
+            layers.Rule = AberrationWatch.RuleFor(snapshot.Aberration, measures: false);
+            layers.TakeVerdicts();
+        }
+
         _judge.Config = config;
         _judge.NowMs = frame.FrameMs;
         _memory = snapshot.SessionMemory;
@@ -323,21 +330,29 @@ public sealed class ReadsWorker
     {
         if (KeepCrop is null || item.Crop.Image.Empty())
             return;
+        if (result.Name is not { Length: > 0 } && result.Reason is ReadResult.NoDistanceLine or ReadResult.OffCentre)
+            return;
         if (!_kept.TryGetValue(item.Id, out var list))
             _kept[item.Id] = list = new List<KeptRead>();
         if (list.Count >= _settings.ReadCropsPerPlate)
             return;
         var text = result.Name is { Length: > 0 } name ? name : string.IsNullOrEmpty(result.Reason) ? result.Class.ToString() : result.Class + "-" + result.Reason;
-        var informative = result.Name is { Length: > 0 } || result.Reason != ReadResult.NoDistanceLine;
-        list.Add(new KeptRead(item.Crop.Image.Clone(), text, item.Crop.Origin, frame.WindowWidth, frame.WindowHeight, informative));
+        list.Add(new KeptRead(item.Crop.Image.Clone(), text, result.Name is { Length: > 0 } ? result.Name : null, item.Crop.Origin, frame.WindowWidth, frame.WindowHeight));
     }
 
     private void FlushKept(int id)
     {
         if (!_kept.Remove(id, out var list))
             return;
-        var handOver = (!_states.TryGetValue(id, out var state) || state.Status != PlateStatus.Stopped || state.IgnoredReads >= _settings.IgnoredReadsLimit)
-                          && list.Exists(kept => kept.Informative);
+        var handOver = list.Count > 0
+                       && (!_states.TryGetValue(id, out var state) || state.Status != PlateStatus.Stopped || state.IgnoredReads >= _settings.IgnoredReadsLimit);
+        if (handOver && list.Exists(kept => kept.Name is { } name && IsUnknown(name, _settings.UnknownReadDistance)))
+        {
+            handOver = _unknownCropsHanded < _settings.ReadCropsUnknownPerRun;
+            if (handOver)
+                _unknownCropsHanded += list.Count;
+        }
+
         for (var i = 0; i < list.Count; i++)
         {
             var kept = list[i];
@@ -351,6 +366,29 @@ public sealed class ReadsWorker
 
             kept.Image.Dispose();
         }
+    }
+
+    public static bool IsUnknown(string name, int maxEdits)
+    {
+        const string unknown = "UNKNOWN";
+        if (Math.Abs(name.Length - unknown.Length) > maxEdits)
+            return false;
+        var row = new int[unknown.Length + 1];
+        for (var j = 0; j < row.Length; j++)
+            row[j] = j;
+        for (var i = 1; i <= name.Length; i++)
+        {
+            var diagonal = row[0];
+            row[0] = i;
+            for (var j = 1; j <= unknown.Length; j++)
+            {
+                var above = row[j];
+                row[j] = Math.Min(Math.Min(row[j] + 1, row[j - 1] + 1), diagonal + (char.ToUpperInvariant(name[i - 1]) == unknown[j - 1] ? 0 : 1));
+                diagonal = above;
+            }
+        }
+
+        return row[unknown.Length] <= maxEdits;
     }
 
     public void DropAllKept()

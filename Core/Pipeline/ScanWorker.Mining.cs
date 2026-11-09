@@ -39,6 +39,7 @@ public sealed partial class ScanWorker
         if (!read.Found)
             return;
         var table = MiningTables?.Current(_clock.NowMs) ?? MiningTable.Embedded;
+        read = TableSnap.Apply(read, table, Mining.Settings);
         var state = MiningState.FromLock(read, frame.FrameMs, table);
         updates.Add(new MiningUpdate(PipelineGroup.Scan, frame.FrameMs, snapshot.Epoch, state));
         _stats?.AddMiningLock();

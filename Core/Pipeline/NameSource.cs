@@ -28,6 +28,10 @@ public interface INameSource
 
     Task RefreshInBackgroundAsync(string name, CancellationToken ct) => Task.CompletedTask;
 
+    void NoteSeenOnPlate(string name)
+    {
+    }
+
     void SetLiveWaiting(int count)
     {
     }

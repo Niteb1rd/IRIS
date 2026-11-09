@@ -22,15 +22,21 @@ public sealed class MergeResult
 
 public static class SocialConfigMerger
 {
-    public static MergeResult Merge(SocialConfig original, SocialConfig imported)
+    public static MergeResult Merge(SocialConfig original, SocialConfig imported, bool importedWins = false)
     {
-        var merged = new SocialConfig { Name = original.Name, OrgsMainOrgOnly = original.OrgsMainOrgOnly, OrgRulesMainOrgOnly = original.OrgRulesMainOrgOnly };
+        var winner = importedWins ? imported : original;
+        var merged = new SocialConfig { Name = original.Name, OrgsMainOrgOnly = winner.OrgsMainOrgOnly, OrgRulesMainOrgOnly = winner.OrgRulesMainOrgOnly };
+        var importedPlayers = importedWins ? imported.Players.GroupBy(p => p.Handle, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase) : null;
+        var importedOrgs = importedWins ? imported.Orgs.GroupBy(o => o.Sid, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase) : null;
+        var importedRules = importedWins
+            ? imported.OrgRules.Where(r => r.Kind != AttributeKind.NoMatch).GroupBy(RuleKey, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
+            : null;
         var result = new MergeResult(merged);
 
         var handles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in original.Players)
         {
-            merged.Players.Add(p);
+            merged.Players.Add(importedPlayers is not null && importedPlayers.TryGetValue(p.Handle, out var newer) ? newer : p);
             handles.Add(p.Handle);
         }
         foreach (var p in imported.Players)
@@ -49,7 +55,7 @@ public static class SocialConfigMerger
         var sids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var o in original.Orgs)
         {
-            merged.Orgs.Add(o);
+            merged.Orgs.Add(importedOrgs is not null && importedOrgs.TryGetValue(o.Sid, out var newer) ? newer : o);
             sids.Add(o.Sid);
         }
         foreach (var o in imported.Orgs)
@@ -68,7 +74,7 @@ public static class SocialConfigMerger
         var rules = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var r in original.OrgRules.Where(r => r.Kind != AttributeKind.NoMatch))
         {
-            merged.OrgRules.Add(r);
+            merged.OrgRules.Add(importedRules is not null && importedRules.TryGetValue(RuleKey(r), out var newer) ? newer : r);
             rules.Add(RuleKey(r));
         }
         foreach (var r in imported.OrgRules.Where(r => r.Kind != AttributeKind.NoMatch))
@@ -84,15 +90,11 @@ public static class SocialConfigMerger
             }
         }
 
-        merged.OrgRules.Add(NoMatchRule.Find(original) ?? NoMatchRule.Find(imported) ?? NoMatchRule.CreateDefault());
+        merged.OrgRules.Add(NoMatchRule.Find(winner) ?? NoMatchRule.Find(importedWins ? original : imported) ?? NoMatchRule.CreateDefault());
         NoMatchRule.Ensure(merged);
 
         return result;
     }
 
-    private static string RuleKey(OrgAttributeRule rule)
-    {
-        var hasValue = rule.Kind is AttributeKind.Archetype or AttributeKind.Activity;
-        return rule.Kind + "|" + (hasValue ? (rule.Value ?? string.Empty).Trim() : string.Empty);
-    }
+    private static string RuleKey(OrgAttributeRule rule) => OrgRuleValues.RuleKey(rule);
 }

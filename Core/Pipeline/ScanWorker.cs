@@ -51,6 +51,14 @@ public sealed partial class ScanWorker : IDisposable
     private PipelineSettings _predict;
     private double _templateScore = double.NaN;
     private string? _templateWhy;
+    private double _templateDistLh = double.NaN;
+    private double _templateReachLh = double.NaN;
+    private bool _templateMoved;
+    private int _checkTries, _failOwnName, _failOtherPlate, _failOther;
+    private long _checkReadTicks, _checkTemplateTicks;
+    private double _checkMaskMs;
+    private readonly AberrationWatch _aberration = new();
+    private double _aberrationNoteSinceMs = double.NaN;
 
     public ScanWorker(PipelineSettings settings, IPlateImageOps ops, ITemplateMatcher? matcher, IUpdateSink sink, IMonotonicClock clock, PipelineStats? stats = null, ILog? log = null, IClock? wallClock = null)
     {
@@ -155,6 +163,7 @@ public sealed partial class ScanWorker : IDisposable
         if (_pending is not { } pending)
             return;
         _pending = null;
+        StartLayerRule(snapshot);
         _scale = env.WindowHeight / 1440.0;
         _predict = _settings.Adapt(snapshot.NominalFrameIntervalMs);
         Forget(snapshot);
@@ -235,15 +244,39 @@ public sealed partial class ScanWorker : IDisposable
         }
 
         var claimed = new List<PixelRect>();
+        var checksStarted = Stopwatch.GetTimestamp();
+        var checkCount = 0;
+        var eachMs = new List<double>();
+        _checkReadTicks = _checkTemplateTicks = 0;
+        _checkMaskMs = 0.0;
         foreach (var region in checks.OrderBy(r => r.MarkerId))
         {
             if (snapshot.Find(region.MarkerId) is not { } marker || region.Image.Empty())
                 continue;
+            var checkStarted = Stopwatch.GetTimestamp();
             RunCheck(marker, region, frameMs, epoch, snapshot, claimed, updates);
+            eachMs.Add(Ms(Stopwatch.GetTimestamp() - checkStarted));
+            checkCount++;
         }
 
+        if (checkCount > 0)
+        {
+            var checksMs = Ms(Stopwatch.GetTimestamp() - checksStarted);
+            var readsMs = Ms(_checkReadTicks);
+            var templatesMs = Ms(_checkTemplateTicks);
+            var maskMs = Math.Min(_checkMaskMs, readsMs);
+            _stats?.AddScanChecks(checksMs);
+            _stats?.AddScanCheckParts(maskMs, readsMs - maskMs, templatesMs, Math.Max(0.0, checksMs - readsMs - templatesMs), eachMs);
+            if (Trace.Line(_clock.NowMs, "scn", "checks") is { } line)
+                Trace!.Write(line.Int("seq", frame.Sequence).Num("fms", frameMs).Int("tick", pending.Tag).Int("checks", checkCount).Num("ms", checksMs, 2)
+                    .Num("maskMs", maskMs, 2).Num("readsMs", readsMs - maskMs, 2).Num("tplMs", templatesMs, 2).Num("eachMaxMs", eachMs.Max(), 2).Text());
+        }
+
+        WatchAberration(snapshot, frame, updates);
         UpdateTiming.Send(_sink, updates, _clock, workStartMs, snapshot.NewFrameMs);
     }
+
+    private static double Ms(long stopwatchTicks) => stopwatchTicks * 1000.0 / Stopwatch.Frequency;
 
     private bool IsTrackedLine(PixelRect line, IndexSnapshot snapshot, double frameMs)
     {

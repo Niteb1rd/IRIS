@@ -85,10 +85,25 @@ public sealed partial class AppServices
     public SaveResult SetOverlayDisabled(bool disabled) =>
         Settings.OverlayDisabled == disabled ? SaveResult.Ok() : UpdateSettings(s => s with { OverlayDisabled = disabled });
 
-    public SaveResult SetPanelEnabled(bool enabled) =>
-        Settings.PanelEnabled == enabled ? SaveResult.Ok() : UpdateSettings(s => s with { PanelEnabled = enabled });
-
     public Task<HostedConfigResult> FetchHostedConfigAsync(string url) => _hostedClient.FetchAsync(url, _shutdown.Token);
+
+    public SaveResult SaveListChange(Func<SocialConfig, SocialConfig> change)
+    {
+        if (ListFileHasErrors)
+            return SaveResult.Failed("The list file has errors; fix it in Settings first.");
+        var config = change(CurrentConfig);
+        var saved = SocialListStore.Save(Paths.SocialListFile, config, ListFile);
+        if (!saved.Success)
+        {
+            Log.Write(Clock.UtcNow, "Interactive Overlay: the list was not saved: " + saved.Error);
+            return saved;
+        }
+
+        ListLoad = new SocialListLoadResult(new ConfigLoadResult { Config = config }, isNew: false);
+        SetCurrentConfig(config);
+        ListApplied?.Invoke(this, EventArgs.Empty);
+        return saved;
+    }
 
     public ImportResult ApplyImport(SocialConfig imported, ImportMode mode)
     {

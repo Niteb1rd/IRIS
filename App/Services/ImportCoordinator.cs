@@ -119,7 +119,7 @@ public sealed class ImportCoordinator
             }
 
             var hasExisting = File.Exists(_services.Paths.SocialListFile);
-            var mode = ImportChoiceDialog.Ask(owner, read.Config, hasExisting, headline, userJustActed);
+            var mode = ImportChoiceDialog.Ask(owner, read.Config, hasExisting, headline, _services.Settings.ImportMode, userJustActed);
             if (mode is null || IsQuitting)
                 return new ImportAttempt(ImportOutcome.Cancelled, "Import cancelled.");
 

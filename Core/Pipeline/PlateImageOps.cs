@@ -15,6 +15,8 @@ public sealed record ReadResult(
     NameLineInfo? NameLine = null)
 {
     public const string NoDistanceLine = "nodist";
+
+    public const string OffCentre = "offcenter";
 }
 
 public readonly record struct NearRead(bool Ok, PixelRect? Line);
@@ -25,7 +27,13 @@ public interface IPlateImageOps
 {
     ScanParts? LastScanParts => null;
 
+    double LastCheckMaskMs => 0.0;
+
+    IReadOnlyList<PixelRect> LastCheckTried => Array.Empty<PixelRect>();
+
     IReadOnlyCollection<PixelRect> LastScanSpeedGroups => Array.Empty<PixelRect>();
+
+    LayerCheck? Layers => null;
 
     IReadOnlyList<PixelRect> Scan(CropImage scan);
 
@@ -52,18 +60,21 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
     private readonly NameplateDetectorSettings _cropSettings;
     private readonly int _windowHeight;
     private readonly Mat _bgrBox = new();
+    private readonly List<PixelRect> _tried = new();
 
     public DetectorImageOps(NameplateReader reader, ScanGeometry geometry, NameplateDetectorSettings baseSettings, IContrastMaskSink? contrastSink = null)
     {
         Geometry = geometry;
         _windowHeight = geometry.WindowHeight;
         _cropSettings = baseSettings with { RegionLeft = 0.0, RegionRight = 1.0, RegionTop = 0.0, RegionBottom = 1.0, ScaleHeight = geometry.WindowHeight };
-        _scanDetector = new NameplateDetector(reader, geometry.DetectorSettings) { ContrastSink = contrastSink };
-        _cropDetector = new NameplateDetector(reader, _cropSettings) { ContrastSink = contrastSink };
+        _scanDetector = new NameplateDetector(reader, geometry.DetectorSettings) { ContrastSink = contrastSink, Layers = Layers };
+        _cropDetector = new NameplateDetector(reader, _cropSettings) { ContrastSink = contrastSink, Layers = Layers };
         _seeds = new PlateSeedBuilder(baseSettings);
     }
 
     public ScanGeometry Geometry { get; }
+
+    public LayerCheck Layers { get; } = new();
 
     private double Px(double at1440) => at1440 * _windowHeight / 1440.0;
 
@@ -178,6 +189,10 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
 
     public ScanParts? LastScanParts { get; private set; }
 
+    public double LastCheckMaskMs { get; private set; }
+
+    public IReadOnlyList<PixelRect> LastCheckTried => _tried;
+
     public IReadOnlyCollection<PixelRect> LastScanSpeedGroups { get; private set; } = Array.Empty<PixelRect>();
 
     private DistanceReading? ReadsAsDistance(Mat image, Rect box)
@@ -198,11 +213,14 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
 
     public PixelRect? Check(CheckItem item)
     {
+        LastCheckMaskMs = 0.0;
+        _tried.Clear();
         var image = item.Crop.Image;
         if (image.Height < Px(_cropSettings.ReadCropMinHeight) || image.Width < Px(_cropSettings.ReadCropMinWidth))
             return null;
         var origin = item.Crop.Origin;
         var candidates = _cropDetector.FindCandidates(image);
+        LastCheckMaskMs = _cropDetector.LastMaskMs;
         var near = new Dictionary<int, double>();
         var tolerance = Math.Max(_cropSettings.NearHeightMinPx, _cropSettings.NearHeightTolerance * item.LineHeight);
         void Consider(int line)
@@ -227,11 +245,11 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
         {
             if (++tries > _cropSettings.NearMaxTries)
                 break;
-            if (_cropDetector.ReadDistanceLine(image, candidates.Boxes[line]) is not null)
-            {
-                var box = candidates.Boxes[line];
-                return new PixelRect(box.X + origin.X, box.Y + origin.Y, box.Width, box.Height);
-            }
+            var box = candidates.Boxes[line];
+            var tried = new PixelRect(box.X + origin.X, box.Y + origin.Y, box.Width, box.Height);
+            _tried.Add(tried);
+            if (_cropDetector.ReadDistanceLine(image, box) is not null)
+                return tried;
         }
 
         return null;
@@ -254,13 +272,17 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
 
     public NearRead ReadNear(CropImage crop, PixelRect expected, double margin)
     {
+        LastCheckMaskMs = 0.0;
+        _tried.Clear();
         var image = crop.Image;
         if (image.Empty() || image.Height < Px(_cropSettings.NearCropMinHeight) || image.Width < Px(_cropSettings.NearCropMinWidth))
             return new NearRead(false, null);
         var origin = crop.Origin;
         var tolerance = Math.Max(_cropSettings.NearHeightMinPx, _cropSettings.NearHeightTolerance * expected.Height);
         var near = new List<(double Distance, Rect Box)>();
-        foreach (var box in _cropDetector.FindLines(image, true))
+        var lines = _cropDetector.FindLines(image, true);
+        LastCheckMaskMs = _cropDetector.LastMaskMs;
+        foreach (var box in lines)
         {
             if (Math.Abs(box.Height - expected.Height) > tolerance)
                 continue;
@@ -276,8 +298,10 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
         {
             if (++tries > _cropSettings.NearMaxTries)
                 break;
+            var tried = new PixelRect(box.X + origin.X, box.Y + origin.Y, box.Width, box.Height);
+            _tried.Add(tried);
             if (_cropDetector.ReadDistanceLine(image, box) is not null)
-                return new NearRead(true, new PixelRect(box.X + origin.X, box.Y + origin.Y, box.Width, box.Height));
+                return new NearRead(true, tried);
         }
 
         return new NearRead(false, null);
@@ -352,7 +376,7 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
         if (centred.Count > 0)
             return new ReadResult(ObservationClass.Unclear, "leftcol");
         if (off.Count > 0)
-            return new ReadResult(ObservationClass.Stop, "offcenter");
+            return new ReadResult(ObservationClass.Stop, ReadResult.OffCentre);
         return new ReadResult(ObservationClass.Unclear, "nothing");
     }
 

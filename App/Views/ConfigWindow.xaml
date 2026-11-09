@@ -84,13 +84,18 @@
             <TextBox IsEnabled="False" IsReadOnly="True"
                      Text="{Binding KindName, Mode=OneWay}" />
         </DataTemplate>
-        <DataTemplate x:Key="RulePriorityPickTemplate">
-            <ComboBox ItemsSource="{x:Static vm:Choices.Priorities}"
-                      SelectedItem="{Binding Priority}" />
-        </DataTemplate>
-        <DataTemplate x:Key="RulePriorityFixedTemplate">
-            <TextBox IsEnabled="False" IsReadOnly="True"
-                     Text="{Binding Priority, Mode=OneWay}" />
+        <DataTemplate x:Key="RankItemTemplate">
+            <Border BorderThickness="1" BorderBrush="{DynamicResource Iris.SwatchBorder}" CornerRadius="3" Padding="2" Margin="0,0,6,4">
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="&#9664;" Width="24" Height="24" Padding="0" IsEnabled="{Binding CanMoveUp}"
+                            ToolTip="Rank higher" Click="OnRankUp" />
+                    <TextBlock Text="{Binding Rank}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="6,0,6,0" />
+                    <ContentPresenter Content="{Binding Color}" ContentTemplate="{StaticResource ColorItemTemplate}"
+                                      VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <Button Content="&#9654;" Width="24" Height="24" Padding="0" IsEnabled="{Binding CanMoveDown}"
+                            ToolTip="Rank lower" Click="OnRankDown" />
+                </StackPanel>
+            </Border>
         </DataTemplate>
     </Window.Resources>
 
@@ -184,35 +189,48 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <TextBlock Grid.Row="0" Margin="0,0,0,8" TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}"
-                               Text="If player is in org, use selected color. Priority number used for tiebreaks 1=highest. Last tiebreak is entry order." />
+                               Text="If player is in an org, use its color. When several match, higher rank wins." />
 
-                    <Grid Grid.Row="1" Margin="0,0,0,4">
+                    <Grid Grid.Row="1" Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Color Rank" FontWeight="SemiBold" VerticalAlignment="Top" Margin="0,5,10,0" />
+                        <ItemsControl x:Name="OrgRankStrip" Grid.Column="1" ItemTemplate="{StaticResource RankItemTemplate}" Focusable="False">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </Grid>
+
+                    <Grid Grid.Row="2" Margin="0,0,0,4">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="175" />
-                            <ColumnDefinition Width="105" />
                             <ColumnDefinition Width="165" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="40" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="SID" FontWeight="SemiBold" />
-                        <TextBlock Grid.Column="1" Text="Priority" FontWeight="SemiBold" />
-                        <TextBlock Grid.Column="2" Text="Color" FontWeight="SemiBold" />
-                        <TextBlock Grid.Column="3" Text="Status" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" Text="Color" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="2" Text="Status" FontWeight="SemiBold" />
                     </Grid>
 
-                    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <ItemsControl x:Name="OrgsList">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Grid Margin="0,2">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="175" />
-                                            <ColumnDefinition Width="105" />
                                             <ColumnDefinition Width="165" />
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="40" />
@@ -222,15 +240,12 @@
                                                  LostKeyboardFocus="OnValueLostFocus"
                                                  PreviewKeyDown="OnNameKeyDown" />
                                         <ComboBox Grid.Column="1" Margin="0,0,8,0" VerticalAlignment="Top"
-                                                  ItemsSource="{x:Static vm:Choices.Priorities}"
-                                                  SelectedItem="{Binding Priority}" />
-                                        <ComboBox Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Top"
                                                   ItemsSource="{x:Static vm:Choices.Colors}"
                                                   SelectedItem="{Binding Color}"
                                                   ItemTemplate="{StaticResource ColorItemTemplate}" />
-                                        <ContentControl Grid.Column="3" Content="{Binding}"
+                                        <ContentControl Grid.Column="2" Content="{Binding}"
                                                         ContentTemplate="{StaticResource StatusCellTemplate}" />
-                                        <Button Grid.Column="4" Content="&#10005;" ToolTip="Remove this row"
+                                        <Button Grid.Column="3" Content="&#10005;" ToolTip="Remove this row"
                                                 Width="30" Height="28" VerticalAlignment="Top"
                                                 Click="OnRemoveRow" />
                                     </Grid>
@@ -239,10 +254,10 @@
                         </ItemsControl>
                     </ScrollViewer>
 
-                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
+                    <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,8,0,0">
                         <Button Content="+ Add org" Padding="12,4" Click="OnAddOrg" />
                         <CheckBox x:Name="OrgsMainOnlyCheck" Content="Only check main org" Margin="16,0,0,0" VerticalAlignment="Center"
-                                  ToolTip="Match only the player's main org. Affiliates are still shown in the info panel."
+                                  ToolTip="Match only the player's main org. Affiliates are still shown in the right panel."
                                   Checked="OnSettingChanged" Unchecked="OnSettingChanged" />
                     </StackPanel>
                 </Grid>
@@ -253,28 +268,42 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <TextBlock Grid.Row="0" Margin="0,0,0,8" TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}"
-                               Text="If name is not in previous two lists, use these general rules. The last row, No Match, colors every other detected player." />
+                               Text="If name is not in previous two lists, use these general rules. When several match, higher rank wins. The last row, No Match, colors every other detected player." />
 
-                    <Grid Grid.Row="1" Margin="0,0,0,4">
+                    <Grid Grid.Row="1" Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Color Rank" FontWeight="SemiBold" VerticalAlignment="Top" Margin="0,5,10,0" />
+                        <ItemsControl x:Name="RuleRankStrip" Grid.Column="1" ItemTemplate="{StaticResource RankItemTemplate}" Focusable="False">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </Grid>
+
+                    <Grid Grid.Row="2" Margin="0,0,0,4">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="152" />
                             <ColumnDefinition Width="*" MinWidth="175" />
-                            <ColumnDefinition Width="105" />
                             <ColumnDefinition Width="165" />
                             <ColumnDefinition Width="40" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Type" FontWeight="SemiBold" />
                         <TextBlock Grid.Column="1" Text="Value" FontWeight="SemiBold" />
-                        <TextBlock Grid.Column="2" Text="Priority" FontWeight="SemiBold" />
-                        <TextBlock Grid.Column="3" Text="Color" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="2" Text="Color" FontWeight="SemiBold" />
                     </Grid>
 
-                    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <ItemsControl x:Name="RulesList">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
@@ -282,7 +311,6 @@
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="152" />
                                             <ColumnDefinition Width="*" MinWidth="175" />
-                                            <ColumnDefinition Width="105" />
                                             <ColumnDefinition Width="165" />
                                             <ColumnDefinition Width="40" />
                                         </Grid.ColumnDefinitions>
@@ -315,25 +343,11 @@
                                                 </Style>
                                             </ContentControl.Style>
                                         </ContentControl>
-                                        <ContentControl Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Top"
-                                                        HorizontalContentAlignment="Stretch" Focusable="False"
-                                                        Content="{Binding}">
-                                            <ContentControl.Style>
-                                                <Style TargetType="ContentControl">
-                                                    <Setter Property="ContentTemplate" Value="{StaticResource RulePriorityPickTemplate}" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsNoMatch}" Value="True">
-                                                            <Setter Property="ContentTemplate" Value="{StaticResource RulePriorityFixedTemplate}" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </ContentControl.Style>
-                                        </ContentControl>
-                                        <ComboBox Grid.Column="3" Margin="0,0,8,0" VerticalAlignment="Top"
+                                        <ComboBox Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Top"
                                                   ItemsSource="{x:Static vm:Choices.Colors}"
                                                   SelectedItem="{Binding Color}"
                                                   ItemTemplate="{StaticResource ColorItemTemplate}" />
-                                        <Button Grid.Column="4" Content="&#10005;" ToolTip="Remove this row"
+                                        <Button Grid.Column="3" Content="&#10005;" ToolTip="Remove this row"
                                                 Width="30" Height="28" VerticalAlignment="Top"
                                                 Style="{DynamicResource Iris.RuleRemoveButton}"
                                                 Click="OnRemoveRow" />
@@ -343,10 +357,10 @@
                         </ItemsControl>
                     </ScrollViewer>
 
-                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
+                    <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,8,0,0">
                         <Button Content="+ Add rule" Padding="12,4" Click="OnAddRule" />
                         <CheckBox x:Name="RulesMainOnlyCheck" Content="Only check main org" Margin="16,0,0,0" VerticalAlignment="Center"
-                                  ToolTip="The rules look only at the player's main org. Affiliates are still shown in the info panel."
+                                  ToolTip="The rules look only at the player's main org. Affiliates are still shown in the right panel."
                                   Checked="OnSettingChanged" Unchecked="OnSettingChanged" />
                     </StackPanel>
                 </Grid>
@@ -395,9 +409,10 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Toggle Overlay" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Toggle IRIS On/Off" VerticalAlignment="Center" />
                             <local:HotkeyBox x:Name="OverlayHotkeyBox" Grid.Row="0" Grid.Column="1" Margin="0,2" Padding="4,2"
                                              HotkeyChanged="OnHotkeyBoxChanged" />
                             <Button x:Name="ClearOverlayHotkeyButton" Grid.Row="0" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
@@ -405,16 +420,8 @@
                             <TextBlock x:Name="OverlayHotkeyError" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Foreground="{DynamicResource Iris.Error}"
                                        TextWrapping="Wrap" Visibility="Collapsed" />
 
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Toggle Info Panel" VerticalAlignment="Center" />
-                            <local:HotkeyBox x:Name="PanelHotkeyBox" Grid.Row="2" Grid.Column="1" Margin="0,2" Padding="4,2"
-                                             HotkeyChanged="OnHotkeyBoxChanged" />
-                            <Button x:Name="ClearPanelHotkeyButton" Grid.Row="2" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
-                                    Click="OnClearPanelHotkey" />
-                            <TextBlock x:Name="PanelHotkeyError" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Foreground="{DynamicResource Iris.Error}"
-                                       TextWrapping="Wrap" Visibility="Collapsed" />
-
-                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Activate Overlay for" VerticalAlignment="Center" />
-                            <Grid Grid.Row="4" Grid.Column="1">
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Activate IRIS for" VerticalAlignment="Center" />
+                            <Grid Grid.Row="2" Grid.Column="1">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
@@ -427,9 +434,17 @@
                                 <local:HotkeyBox x:Name="TimedHotkeyBox" Grid.Column="2" Margin="0,2" Padding="4,2"
                                                  HotkeyChanged="OnHotkeyBoxChanged" />
                             </Grid>
-                            <Button x:Name="ClearTimedHotkeyButton" Grid.Row="4" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
+                            <Button x:Name="ClearTimedHotkeyButton" Grid.Row="2" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
                                     Click="OnClearTimedHotkey" />
-                            <TextBlock x:Name="TimedHotkeyError" Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" Foreground="{DynamicResource Iris.Error}"
+                            <TextBlock x:Name="TimedHotkeyError" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Foreground="{DynamicResource Iris.Error}"
+                                       TextWrapping="Wrap" Visibility="Collapsed" />
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Toggle Interactive Overlay" VerticalAlignment="Center" />
+                            <local:HotkeyBox x:Name="InteractiveHotkeyBox" Grid.Row="4" Grid.Column="1" Margin="0,2" Padding="4,2"
+                                             HotkeyChanged="OnHotkeyBoxChanged" />
+                            <Button x:Name="ClearInteractiveHotkeyButton" Grid.Row="4" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
+                                    Click="OnClearInteractiveHotkey" />
+                            <TextBlock x:Name="InteractiveHotkeyError" Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" Foreground="{DynamicResource Iris.Error}"
                                        TextWrapping="Wrap" Visibility="Collapsed" />
                         </Grid>
 
@@ -440,6 +455,19 @@
                                 Padding="12,4" Margin="0,0,0,16" Click="OnOpenLogFolder" />
 
                         <TextBlock Text="Shared Config" FontWeight="SemiBold" Margin="0,0,0,4" />
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="250" />
+                                <ColumnDefinition Width="258" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="When Importing a Config" VerticalAlignment="Center" />
+                            <ComboBox x:Name="ImportModeCombo" Grid.Column="1" Margin="0,3" SelectionChanged="OnSettingChanged"
+                                      ToolTip="What an import (file or URL) does with your current lists. The import still asks before it writes anything.">
+                                <ComboBoxItem Content="Merge, Prioritize Local Config" />
+                                <ComboBoxItem Content="Merge, Prioritize Imported Config" />
+                                <ComboBoxItem Content="Replace, Backup Local Config" />
+                            </ComboBox>
+                        </Grid>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,0,0,8">
                             <Button x:Name="ImportFileButton" Content="Import from file&#8230;" Padding="12,4" Margin="0,0,8,0" Click="OnImportFromFile" />
                             <Button x:Name="ExportButton" Content="Export&#8230;" Padding="12,4" Click="OnExport" />
@@ -478,7 +506,7 @@
 
                         <TextBlock Text="Tracking Boundary" FontWeight="SemiBold" Margin="0,16,0,4" />
                         <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}" Margin="0,0,0,6"
-                                   Text="Looks for player in defined area. Note: Active videos other than Star Citizen can cause detection issues." />
+                                   Text="Looks for players in the defined area. Note: Star Citizen does not show names close to the screen edge, so shrinking the area improves performance." />
                         <Button x:Name="BoundaryTestButton" Content="Show Boundary" HorizontalAlignment="Left"
                                 Padding="12,4" Margin="0,0,0,6" Click="OnShowBoundary" />
                         <Grid Margin="0,0,0,6">
@@ -488,6 +516,7 @@
                                 <ColumnDefinition Width="82" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
@@ -528,11 +557,33 @@
                                     TickFrequency="5" IsSnapToTickEnabled="True" SmallChange="5" LargeChange="15"
                                     ValueChanged="OnTrackingFpsSliderChanged" />
                             <TextBlock x:Name="TrackingFpsLabel" Grid.Row="4" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center" />
+
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Keep Lost Players in Panel" VerticalAlignment="Center" />
+                            <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Margin="0,3">
+                                <ComboBox x:Name="TrackingLossCombo" Width="55" VerticalAlignment="Center" SelectionChanged="OnSettingChanged"
+                                          ToolTip="How long a player stays in the right panel after IRIS last saw the nameplate." />
+                                <TextBlock Text="Seconds" VerticalAlignment="Center" Margin="6,0,0,0" />
+                            </StackPanel>
                         </Grid>
 
-                        <TextBlock Text="Info Panel" FontWeight="SemiBold" Margin="0,16,0,4" />
-                        <Button x:Name="PanelTestButton" Content="Show Info Panel" HorizontalAlignment="Left"
-                                Padding="12,4" Margin="0,0,0,6" Click="OnShowInfoPanel" />
+                        <TextBlock Text="Overlay" FontWeight="SemiBold" Margin="0,16,0,4" />
+                        <Button x:Name="PanelTestButton" Content="Show Overlay" HorizontalAlignment="Left"
+                                Padding="12,4" Margin="0,0,0,6" Click="OnShowOverlay" />
+                        <CheckBox x:Name="MainOrgOnlyCheck" Content="Display only main org in right panel (unless another org determines color)" Margin="0,0,0,6"
+                                  Checked="OnPanelOrgOptionChanged" Unchecked="OnPanelOrgOptionChanged"
+                                  ToolTip="Only changes what the right panel and the Interactive Overlay's list show (the dossier lists every org). The Orgs and Org-Attribute tabs' &quot;Only check main org&quot; decides the colors." />
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="250" />
+                                <ColumnDefinition Width="258" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Display Org in Right Panel" VerticalAlignment="Center" />
+                            <ComboBox x:Name="OrgDisplayCombo" Grid.Column="1" Margin="0,3" SelectionChanged="OnPanelOrgOptionChanged"
+                                      ToolTip="Full Name shows the org's name as RSI shows it (its SID until IRIS has read the name).">
+                                <ComboBoxItem Content="Full Name" />
+                                <ComboBoxItem Content="SID" />
+                            </ComboBox>
+                        </Grid>
                         <Grid Margin="0,0,0,6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="250" />
@@ -575,16 +626,14 @@
                             <TextBlock Grid.Row="3" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center"
                                        Text="{Binding Value, ElementName=PanelTopGapSlider, StringFormat='{}{0:0}%'}" />
 
-                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Display Player Org" VerticalAlignment="Center" />
-                            <ComboBox x:Name="OrgDisplayCombo" Grid.Row="4" Grid.Column="1" Margin="0,3" SelectionChanged="OnPanelOrgOptionChanged"
-                                      ToolTip="Full Name shows the org's name as RSI shows it (its SID until IRIS has read the name).">
-                                <ComboBoxItem Content="Full Name" />
-                                <ComboBoxItem Content="SID" />
-                            </ComboBox>
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Dossier Width" VerticalAlignment="Center" />
+                            <Slider x:Name="DossierWidthSlider" Grid.Row="4" Grid.Column="1" Margin="0,3" VerticalAlignment="Center"
+                                    TickFrequency="1" IsSnapToTickEnabled="True" SmallChange="1" LargeChange="5"
+                                    ValueChanged="OnOverlaySliderChanged"
+                                    ToolTip="Width of the Interactive Overlay's dossier, in percent of the game window." />
+                            <TextBlock Grid.Row="4" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center"
+                                       Text="{Binding Value, ElementName=DossierWidthSlider, StringFormat='{}{0:0}%'}" />
                         </Grid>
-                        <CheckBox x:Name="MainOrgOnlyCheck" Content="Display only main org (unless another org determines color)" Margin="0,0,0,8"
-                                  Checked="OnPanelOrgOptionChanged" Unchecked="OnPanelOrgOptionChanged"
-                                  ToolTip="Only changes what the info panel shows. The Orgs and Org-Attribute tabs' &quot;Only check main org&quot; decides the colors." />
 
                         <TextBlock Text="Cache" FontWeight="SemiBold" Margin="0,16,0,4" />
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
@@ -598,6 +647,20 @@
                                 Padding="12,4" Margin="0,0,0,8" Click="OnRefreshCache" />
 
                         <TextBlock Text="Mining" FontWeight="SemiBold" Margin="0,16,0,4" />
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="250" />
+                                <ColumnDefinition Width="258" />
+                                <ColumnDefinition Width="82" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Mining Label Zoom" VerticalAlignment="Center" />
+                            <Slider x:Name="MiningZoomSlider" Grid.Column="1" Margin="0,3" VerticalAlignment="Center"
+                                    TickFrequency="10" IsSnapToTickEnabled="True" SmallChange="10" LargeChange="10"
+                                    ValueChanged="OnOverlaySliderChanged"
+                                    ToolTip="Size of the mining label: 100% is as tall as the signal's digits." />
+                            <TextBlock Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center"
+                                       Text="{Binding Value, ElementName=MiningZoomSlider, StringFormat='{}{0:0}%'}" />
+                        </Grid>
                         <Button x:Name="EditMiningButton" Content="Edit Mining Signals Data" HorizontalAlignment="Left"
                                 Padding="12,4" Margin="0,0,0,8" Click="OnEditMiningData" />
                         <CheckBox x:Name="MiningDisabledCheck" Content="Disable Mining Feature" Margin="0,0,0,8"
