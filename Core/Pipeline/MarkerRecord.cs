@@ -40,9 +40,15 @@ public sealed record MarkerRecord(int Id, double BornMs)
 
     public const int RecentSamples = 6;
 
+    private const double WindowSlackMs = 0.001;
+
     public TrackSample[] Recent { get; init; } = Array.Empty<TrackSample>();
 
     public int MissedFrames { get; init; }
+
+    public double MissKnownMs { get; init; } = double.NaN;
+
+    public bool MovedUnseen { get; init; }
 
     public double PredictionErrorPx { get; init; }
 
@@ -53,6 +59,10 @@ public sealed record MarkerRecord(int Id, double BornMs)
     public double NameMs { get; init; } = double.NegativeInfinity;
 
     public double NameSeenMs { get; init; } = double.NegativeInfinity;
+
+    public NameEvidence HitNameEvidence { get; init; }
+
+    public double HitNameEvidenceMs { get; init; } = double.NegativeInfinity;
 
     public PixelRect? PlateRel { get; init; }
 
@@ -116,6 +126,14 @@ public sealed record MarkerRecord(int Id, double BornMs)
             return Limit(Velocity(Post0, Post1), maxPxPerMs);
         if (Post1 is null)
             return (0.0, 0.0);
+        if (Post0 is { } previous && Recent.Length > 0)
+        {
+            var newest = Post1.Value.Ms;
+            foreach (var sample in Recent)
+                if (!sample.Template)
+                    newest = Math.Max(newest, sample.Ms);
+            windowMs = Math.Max(windowMs, newest - previous.Ms + WindowSlackMs);
+        }
         return Limit(Fit(Recent, windowMs, OffsetMs, hitsOnly: true), maxPxPerMs);
     }
 
@@ -149,14 +167,14 @@ public sealed record MarkerRecord(int Id, double BornMs)
     public MarkerRecord WithLineBox(double ms, PixelRect line, PipelineGroup? by = null) =>
         this with { CentreX = line.X + line.Width / 2.0, Top = line.Y, Width = line.Width, DistanceWidth = line.Width, Height = line.Height, LineMs = ms, LineBy = by ?? LineBy };
 
-    public MarkerRecord WithSamples(double ms, double centreX, double top, PipelineGroup? by = null, bool template = false)
+    public MarkerRecord WithSamples(double ms, double centreX, double top, PipelineGroup? by = null, bool template = false, bool nameChecked = true)
     {
         var sample = new TrackSample(ms, centreX, top, template);
         var recent = new TrackSample[Math.Min(Recent.Length + 1, RecentSamples)];
         Array.Copy(Recent, Recent.Length + 1 - recent.Length, recent, 0, recent.Length - 1);
         recent[^1] = sample;
         var record = this with { Hist0 = Hist1, Hist1 = sample, Recent = recent, SamplesBy = by ?? SamplesBy };
-        return MarkedConfirmed && !template ? record with { Post0 = Post1, Post1 = sample } : record;
+        return MarkedConfirmed && !template && nameChecked && ms >= OffsetMs ? record with { Post0 = Post1, Post1 = sample } : record;
     }
 
     public MarkerRecord WithFound(double ms) => ms > LastFoundMs ? this with { LastFoundMs = ms } : this;

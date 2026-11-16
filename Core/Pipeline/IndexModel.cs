@@ -12,10 +12,8 @@ public static class IndexModel
         return Math.Min(raw, settings.FreshnessMaxMs);
     }
 
-    public static bool IsFresh(MarkerRecord marker, double nowMs, double limitMs) => nowMs - marker.LastFoundMs <= limitMs;
-
     public static bool IsDrawable(MarkerRecord marker, double nowMs, PipelineSettings settings) =>
-        marker.HasTrackingFix && marker.MissedFrames <= settings.RenderMissFrames && nowMs - marker.LastFoundMs <= settings.FreshnessMaxMs;
+        !marker.MovedUnseen && nowMs - marker.LastFoundMs <= settings.BracketKeepMs;
 
     public static double VelocityWindowMs(IndexSnapshot snapshot, PipelineSettings settings) =>
         Math.Max(settings.VelocityWindowMinMs, settings.VelocityWindowFrames * snapshot.NominalFrameIntervalMs);
@@ -24,20 +22,20 @@ public static class IndexModel
         marker.Status == PlateStatus.Confirmed && marker.Name is { } name && marker.PlateRel is not null
         && marker.Identity is { } identity && identity.Rsi != RsiState.NotFound && string.Equals(identity.Handle, name, StringComparison.OrdinalIgnoreCase);
 
-    public static HashSet<int>? WithheldDuplicates(IReadOnlyList<MarkerRecord> markers)
+    public static HashSet<int>? WithheldDuplicates(IReadOnlyList<MarkerRecord> markers, double nowMs, PipelineSettings pipe)
     {
         HashSet<int>? withheld = null;
         for (var i = 0; i < markers.Count; i++)
         {
             var marker = markers[i];
-            if (marker.Status != PlateStatus.Confirmed || marker.Name is null)
+            if (!CountsAsDuplicate(marker, nowMs, pipe))
                 continue;
             var shared = false;
             var greens = 0;
             for (var j = 0; j < markers.Count; j++)
             {
                 var other = markers[j];
-                if (other.Status != PlateStatus.Confirmed || !string.Equals(other.Name, marker.Name, StringComparison.OrdinalIgnoreCase))
+                if (!CountsAsDuplicate(other, nowMs, pipe) || !string.Equals(other.Name, marker.Name, StringComparison.OrdinalIgnoreCase))
                     continue;
                 shared |= j != i;
                 if (PlateColourOf(other) == PlateColor.Green)
@@ -51,14 +49,18 @@ public static class IndexModel
         return withheld;
     }
 
+    public static bool CountsAsDuplicate(MarkerRecord marker, double nowMs, PipelineSettings pipe) =>
+        marker.Status == PlateStatus.Confirmed && marker.Name is not null && nowMs - marker.LastFoundMs < pipe.LostDuplicateEndMs;
+
     public static PlateColor? PlateColourOf(MarkerRecord marker) => marker.NameLine?.Colour ?? marker.PlateColour;
 
-    public static (double CentreX, double Top) PositionAt(MarkerRecord marker, IndexSnapshot snapshot, double nowMs, PipelineSettings pipe, LiveSettings live)
+    public static (double CentreX, double Top) PositionAt(MarkerRecord marker, IndexSnapshot snapshot, double nowMs, PipelineSettings pipe, LiveSettings live, double leadMs = 0.0)
     {
         var interval = marker.TrackingIntervalMs;
         if (interval is not { } pair || pair > pipe.FreshnessMaxMs)
             return (marker.CentreX, marker.Top);
-        var dt = Math.Min(Math.Max(0.0, nowMs - marker.LineMs), pipe.RenderLookAheadMaxMs);
+        var ageEnd = double.IsNaN(marker.MissKnownMs) ? nowMs : Math.Min(nowMs, marker.MissKnownMs + leadMs);
+        var dt = Math.Min(Math.Max(0.0, ageEnd - marker.LineMs), pipe.RenderLookAheadMaxMs);
         var (vx, vy) = marker.Speed(VelocityWindowMs(snapshot, pipe), marker.MaxSpeedPxPerMs(pipe));
         var speed = Math.Sqrt(vx * vx + vy * vy);
         if (dt <= 0.0 || speed < live.MinSpeedPxPerMs)
@@ -69,7 +71,7 @@ public static class IndexModel
         return (marker.CentreX + vx * dt * scale, marker.Top + vy * dt * scale);
     }
 
-    public static OverlayModel ModelAt(IndexSnapshot snapshot, double nowMs, PipelineSettings pipe, LiveSettings live, OverlayModel? previous = null, double? panelKeepMs = null)
+    public static OverlayModel ModelAt(IndexSnapshot snapshot, double nowMs, PipelineSettings pipe, LiveSettings live, OverlayModel? previous = null, double? panelKeepMs = null, double leadMs = 0.0)
     {
         var keepMs = panelKeepMs ?? pipe.PanelStaleMs;
         var note = snapshot.BlankPictureNote ? BlankPictureWatch.NoteText
@@ -82,7 +84,7 @@ public static class IndexModel
 
         var items = new List<BracketItem>();
         var listed = new List<MarkerRecord>();
-        var withheld = WithheldDuplicates(snapshot.Markers);
+        var withheld = WithheldDuplicates(snapshot.Markers, nowMs, pipe);
         foreach (var marker in snapshot.Markers)
         {
             if (!IsListed(marker) || nowMs - marker.LastFoundMs > keepMs)
@@ -91,7 +93,7 @@ public static class IndexModel
             if (!IsDrawable(marker, nowMs, pipe) || (withheld is not null && withheld.Contains(marker.Id)))
                 continue;
             var rel = marker.PlateRel!.Value;
-            var (cx, top) = PositionAt(marker, snapshot, nowMs, pipe, live);
+            var (cx, top) = PositionAt(marker, snapshot, nowMs, pipe, live, leadMs);
             var box = new PixelRect(Math.Round(cx + rel.X), Math.Round(top + rel.Y), rel.Width, rel.Height);
             if (snapshot.Boundary is { } area && snapshot.WindowWidth > 0 && snapshot.WindowHeight > 0 && area.DistanceOutside(box, snapshot.WindowWidth, snapshot.WindowHeight) > 0.0)
                 continue;

@@ -59,8 +59,6 @@ public sealed class PlateState
 
     public string? Name { get; set; }
 
-    public string? StopReason { get; set; }
-
     public bool EverNamed { get; set; }
 
     public int ReadsTotal { get; set; }
@@ -70,6 +68,26 @@ public sealed class PlateState
     public double LastReadMs { get; set; } = double.NegativeInfinity;
 
     public O0EvidenceTable Evidence { get; } = new();
+
+    public int RemeasureLeft { get; set; }
+
+    public PixelRect? MeasuredNameRel { get; set; }
+
+    public int MeasuredAgreeing { get; set; }
+
+    public bool Disputed { get; set; }
+
+    public double LastVoteMs { get; set; } = double.NegativeInfinity;
+
+    public string? RunName { get; set; }
+
+    public bool RunExcluded { get; set; }
+
+    public int RunVotes { get; set; }
+
+    public int Reserve { get; set; }
+
+    public bool InContact { get; set; }
 
     public IReadOnlyList<ReadRecord> Recent => _recent;
 

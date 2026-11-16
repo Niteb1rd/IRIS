@@ -23,6 +23,10 @@ public static class ColorResolver
 {
     public const string HiddenMainOrgText = "Hidden Main Org";
 
+    public const string RedactedText = "REDACTED";
+
+    public const string NoOrgText = "No Org";
+
     public static ColorMatch Resolve(string handle, IReadOnlyList<OrgMembership> orgs, SocialConfig config)
     {
         var player = config.Players.FirstOrDefault(p => LookAlikes.NamesEqual(p.Handle, handle));
@@ -87,9 +91,9 @@ public static class ColorResolver
         switch (rule.Kind)
         {
             case AttributeKind.NoOrg:
-                return (orgs.Count == 0, null, "No Org");
+                return (orgs.Count == 0, null, NoOrgText);
             case AttributeKind.Redacted:
-                return (orgs.Any(o => o.IsRedacted), null, "REDACTED");
+                return (orgs.Any(o => o.IsRedacted), null, RedactedText);
             case AttributeKind.HiddenMainOrg:
                 return (orgs.Any(o => o.IsMain && o.IsRedacted), null, HiddenMainOrgText);
             case AttributeKind.NoMatch:

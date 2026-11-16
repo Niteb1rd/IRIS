@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using Iris.Core.Config;
 using Iris.Core.Detection;
+using Iris.Core.Lookup;
 
 namespace Iris.Core.Updates;
 
@@ -20,6 +21,8 @@ public static class UpdateInstaller
     private const string DataFolder = "Data";
 
     public static readonly IReadOnlyList<string> KeptFolders = new[] { "Config", "Logs" };
+
+    public static readonly IReadOnlyList<string> ProgramFiles = new[] { "IRIS.exe", "LICENSE.txt", "README.txt", "THIRD-PARTY-NOTICES.txt" };
 
     public static string? Unpack(string zipPath, string extractFolder, string exeName, out string? error)
     {
@@ -142,14 +145,14 @@ public static class UpdateInstaller
         {
             if (!File.Exists(shipped))
                 return 0;
-            var shippedText = File.ReadAllText(shipped);
+            var shippedText = BoundedFile.ReadText(shipped, CacheSettings.ConfigMaxFileBytes);
             if (!File.Exists(mine))
             {
                 AtomicFile.WriteText(mine, shippedText, keepBackup: false);
                 return ExclusionList.ParseNames(shippedText).Count;
             }
 
-            var text = File.ReadAllText(mine);
+            var text = BoundedFile.ReadText(mine, CacheSettings.ConfigMaxFileBytes);
             var have = ExclusionList.ParseNames(text);
             var added = new List<string>();
             foreach (var line in shippedText.Split('\n'))
@@ -191,23 +194,23 @@ public static class UpdateInstaller
         {
         }
 
-        var leftovers = new List<string>();
-        foreach (var folder in new[] { installFolder, Path.Combine(installFolder, DataFolder) })
+        var leftovers = ProgramFiles.Select(name => Path.Combine(installFolder, name + OldSuffix)).ToList();
+        try
         {
-            try
-            {
-                if (Directory.Exists(folder))
-                    leftovers.AddRange(Directory.EnumerateFiles(folder, "*" + OldSuffix, SearchOption.TopDirectoryOnly));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-            }
+            var data = Path.Combine(installFolder, DataFolder);
+            if (Directory.Exists(data))
+                leftovers.AddRange(Directory.EnumerateFiles(data, "*.dll" + OldSuffix, SearchOption.TopDirectoryOnly));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
         }
 
         foreach (var file in leftovers)
         {
             try
             {
+                if (!File.Exists(file))
+                    continue;
                 File.Delete(file);
                 removed++;
             }

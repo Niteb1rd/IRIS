@@ -21,7 +21,7 @@ internal sealed class BracketRenderer : IDisposable
     private readonly AutoResetEvent _wake = new(false);
     private readonly RenderStats? _stats = AppVersion.Diagnostics ? new(StopwatchClock.Shared.NowMs) : null;
     private readonly BracketRasterizer _rasterizer = new();
-    private readonly object _cpuGate = new();
+    private readonly Lock _cpuGate = new();
     private Thread? _thread;
     private volatile Target _target;
     private volatile bool _stop;

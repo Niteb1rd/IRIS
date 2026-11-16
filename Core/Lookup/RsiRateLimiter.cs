@@ -7,12 +7,17 @@ public readonly record struct BackoffChange(TimeSpan Before, TimeSpan After, Tim
 
 public sealed class RsiRateLimiter
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly IClock _clock;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly TimeSpan _interval;
+    private readonly int _burst;
+    private readonly TimeSpan _burstGap;
 
     private TimeSpan _gap;
+
+    private double _tokens;
+    private DateTimeOffset _tokensAt = DateTimeOffset.MinValue;
 
     private DateTimeOffset _lastSlot = DateTimeOffset.MinValue;
 
@@ -20,12 +25,18 @@ public sealed class RsiRateLimiter
 
     private long _generation;
 
-    public RsiRateLimiter(IClock clock, Func<TimeSpan, CancellationToken, Task>? delay = null, TimeSpan? interval = null)
+    private DateTimeOffset _lastNow = DateTimeOffset.MinValue;
+
+    public RsiRateLimiter(IClock clock, Func<TimeSpan, CancellationToken, Task>? delay = null, TimeSpan? interval = null, int burst = 1, TimeSpan? burstGap = null)
     {
         _clock = clock;
         _delay = delay ?? ((wait, ct) => Task.Delay(wait, ct));
         _interval = interval ?? CacheSettings.RsiDefaultInterval;
+        _burst = Math.Max(1, burst);
+        var gap = burstGap ?? _interval;
+        _burstGap = gap < TimeSpan.Zero ? TimeSpan.Zero : gap > _interval ? _interval : gap;
         _gap = _interval;
+        _tokens = _burst;
     }
 
     public TimeSpan CurrentGap
@@ -66,9 +77,12 @@ public sealed class RsiRateLimiter
             if (retryAfter is { } asked && asked > wait)
                 wait = asked > CacheSettings.RsiMaxRetryAfter ? CacheSettings.RsiMaxRetryAfter : asked;
 
-            var until = _clock.UtcNow + wait;
+            var now = Now();
+            var until = now + wait;
             if (until > _notBefore)
                 _notBefore = until;
+            _tokens = 0.0;
+            _tokensAt = now;
             return new BackoffChange(before, _gap, wait);
         }
     }
@@ -82,7 +96,7 @@ public sealed class RsiRateLimiter
             long generation;
             lock (_gate)
             {
-                var now = _clock.UtcNow;
+                var now = Now();
                 generation = _generation;
 
                 if (previous is not null && _notBefore <= now)
@@ -111,23 +125,73 @@ public sealed class RsiRateLimiter
         }
     }
 
+    private DateTimeOffset Now()
+    {
+        var now = _clock.UtcNow;
+        if (now < _lastNow)
+        {
+            var back = _lastNow - now;
+            _lastSlot = MoveBack(_lastSlot, back);
+            _notBefore = MoveBack(_notBefore, back);
+            _tokensAt = MoveBack(_tokensAt, back);
+        }
+
+        _lastNow = now;
+        return now;
+    }
+
+    private static DateTimeOffset MoveBack(DateTimeOffset time, TimeSpan back) =>
+        time == DateTimeOffset.MinValue || time - DateTimeOffset.MinValue <= back ? DateTimeOffset.MinValue : time - back;
+
     private Reservation Reserve(DateTimeOffset now)
     {
-        var earliest = _lastSlot + _gap;
-        if (_notBefore > earliest)
-            earliest = _notBefore;
-        var slot = earliest > now ? earliest : now;
+        DateTimeOffset slot;
+        double tokensLeft;
+        if (_gap > _interval)
+        {
+            slot = Later(Later(_lastSlot + _gap, _notBefore), now);
+            tokensLeft = 0.0;
+        }
+        else
+        {
+            slot = Later(Later(_lastSlot + _burstGap, _notBefore), now);
+            var tokens = TokensAt(slot);
+            if (tokens < 1.0)
+            {
+                slot = Later(slot, _tokensAt + TimeSpan.FromTicks((long)Math.Ceiling((1.0 - _tokens) * _interval.Ticks)));
+                tokens = Math.Max(1.0, TokensAt(slot));
+            }
 
-        var reservation = new Reservation(slot, _lastSlot, slot - now);
+            tokensLeft = tokens - 1.0;
+        }
+
+        var reservation = new Reservation(slot, _lastSlot, slot - now, _tokens, _tokensAt);
         _lastSlot = slot;
+        _tokens = tokensLeft;
+        _tokensAt = slot;
         return reservation;
     }
 
-    private void Release(Reservation reservation)
+    private double TokensAt(DateTimeOffset time)
     {
-        if (_lastSlot == reservation.Slot)
-            _lastSlot = reservation.PreviousSlot;
+        if (_tokensAt == DateTimeOffset.MinValue || time <= _tokensAt)
+            return _tokensAt == DateTimeOffset.MinValue ? _burst : _tokens;
+        return Math.Min(_burst, _tokens + (double)(time - _tokensAt).Ticks / _interval.Ticks);
     }
 
-    private readonly record struct Reservation(DateTimeOffset Slot, DateTimeOffset PreviousSlot, TimeSpan Wait);
+    private static DateTimeOffset Later(DateTimeOffset a, DateTimeOffset b) => a > b ? a : b;
+
+    private void Release(Reservation reservation)
+    {
+        if (_lastSlot != reservation.Slot)
+            return;
+        _lastSlot = reservation.PreviousSlot;
+        if (_tokensAt == reservation.Slot)
+        {
+            _tokens = reservation.PreviousTokens;
+            _tokensAt = reservation.PreviousTokensAt;
+        }
+    }
+
+    private readonly record struct Reservation(DateTimeOffset Slot, DateTimeOffset PreviousSlot, TimeSpan Wait, double PreviousTokens, DateTimeOffset PreviousTokensAt);
 }

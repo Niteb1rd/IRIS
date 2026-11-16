@@ -2,8 +2,6 @@ namespace Iris.Core.Detection;
 
 public static class LookAlikes
 {
-    public static IReadOnlyList<string> AccuracyGroups { get; } = Array.Empty<string>();
-
     public static IReadOnlyList<string> EfficiencyGroups { get; } = new[] { "0OQD", "1I7", "5S", "8B", "6G", "2Z" };
 
     public const string EfficiencyLetters = "OQDISBGZ";
@@ -12,6 +10,8 @@ public static class LookAlikes
         a is not null && b is not null && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
     public static string FoldO0(string name) => name.Replace('0', 'O');
+
+    public static string FoldIdentity(string name) => FoldO0(name.ToUpperInvariant()).Replace('-', '_');
 
     public static char? EfficiencyDigit(char c)
     {

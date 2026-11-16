@@ -14,13 +14,14 @@ public partial class ImportChoiceDialog : Window
         AppTheme.Attach(this);
     }
 
-    public static ImportMode? Ask(Window? owner, SocialConfig imported, bool hasExistingFile, string headline, ImportMode mode, bool userJustActed = false)
+    public static ImportMode? Ask(
+        Window? owner, SocialConfig imported, bool hasExistingFile, string headline, ImportMode mode, string? changes, bool userJustActed = false)
     {
         var dialog = new ImportChoiceDialog { _mode = mode };
         dialog.ModeText.Text = ModeTitle(mode);
         dialog.ModeHint.Text = ModeHintText(mode);
         dialog.HeadlineText.Text = headline;
-        dialog.SummaryText.Text = Describe(imported);
+        dialog.SummaryText.Text = changes is null ? Describe(imported) : Describe(imported) + "\n" + changes;
         dialog.ChoicesPanel.Visibility = hasExistingFile ? Visibility.Visible : Visibility.Collapsed;
         dialog.NoExistingPanel.Visibility = hasExistingFile ? Visibility.Collapsed : Visibility.Visible;
 
@@ -40,7 +41,7 @@ public partial class ImportChoiceDialog : Window
 
     private static string Describe(SocialConfig config)
     {
-        var text = $"{Plural(config.Players.Count, "player", "players")}, "
+        var text = "File: " + $"{Plural(config.Players.Count, "player", "players")}, "
             + $"{Plural(config.Orgs.Count, "org", "orgs")}, "
             + $"{Plural(config.UserRuleCount, "org-attribute rule", "org-attribute rules")}";
         return config.NewerVersionNote() is { } note ? text + "\n" + note : text;

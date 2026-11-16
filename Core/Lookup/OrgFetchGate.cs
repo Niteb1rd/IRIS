@@ -10,7 +10,7 @@ public sealed class OrgFetchGate
     }
 
     private readonly Dictionary<string, State> _states = new(StringComparer.OrdinalIgnoreCase);
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public bool MayAsk(string sid, DateTimeOffset now)
     {

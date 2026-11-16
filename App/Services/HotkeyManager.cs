@@ -6,6 +6,7 @@ using System.Threading;
 using System.Windows.Threading;
 using Iris.Core;
 using Iris.Core.Config;
+using Iris.Core.Pipeline;
 
 namespace Iris.App.Services;
 
@@ -321,12 +322,19 @@ public sealed class HotkeyManager : IDisposable
 
     private static bool IsDown(int virtualKey) => (NativeMethods.GetAsyncKeyState(virtualKey) & 0x8000) != 0;
 
-    private void Post(HotkeyAction action) =>
+    private void Post(HotkeyAction action)
+    {
+        var pressMs = StopwatchClock.Shared.NowMs;
         _dispatcher.BeginInvoke(new Action(() =>
         {
-            if (!_disposed)
-                Pressed?.Invoke(this, action);
+            if (_disposed)
+                return;
+            LastPressMs = pressMs;
+            Pressed?.Invoke(this, action);
         }));
+    }
+
+    public static double LastPressMs { get; private set; } = double.NaN;
 
     public void Dispose()
     {

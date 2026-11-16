@@ -21,6 +21,8 @@ public enum EndReason
     MarkerCheck,
 
     Duplicate,
+
+    LostDuplicate,
 }
 
 [Flags]
@@ -30,7 +32,6 @@ public enum IndexTrigger
     NewFrame = 1,
     NameConfirmed = 2,
     SettingsChanged = 4,
-    All = NewFrame | NameConfirmed | SettingsChanged,
 }
 
 public sealed record RequestSpec(
@@ -113,7 +114,7 @@ public sealed record NewMarkerUpdate(PipelineGroup Group, double FrameMs, int Ep
 
 public sealed record TrackingHitUpdate(
     PipelineGroup Group, double FrameMs, int Epoch, int Id, double CentreX, double Top, double Width, double DistanceWidth = double.NaN, double PredictionErrorPx = double.NaN,
-    bool NameSeen = false)
+    bool NameSeen = false, bool NameChecked = true, NameEvidence Evidence = NameEvidence.None)
     : IndexUpdate(Group, FrameMs, Epoch);
 
 public sealed record PositionUpdate(PipelineGroup Group, double FrameMs, int Epoch, int Id, PixelRect Line, double DistanceWidth = double.NaN) : IndexUpdate(Group, FrameMs, Epoch);
@@ -123,6 +124,9 @@ public sealed record TemplateHitUpdate(PipelineGroup Group, double FrameMs, int 
 public sealed record StatusUpdate(PipelineGroup Group, double FrameMs, int Epoch, int Id, PlateStatus Status) : IndexUpdate(Group, FrameMs, Epoch);
 
 public sealed record ConfirmUpdate(PipelineGroup Group, double FrameMs, int Epoch, int Id, string Name, PixelRect NameRel, PixelRect PlateRel, NameLineInfo? NameLine = null) : IndexUpdate(Group, FrameMs, Epoch);
+
+public sealed record RemeasureUpdate(PipelineGroup Group, double FrameMs, int Epoch, int Id, string Name, PixelRect NameRel, PixelRect PlateRel, NameLineInfo? NameLine = null)
+    : IndexUpdate(Group, FrameMs, Epoch);
 
 public sealed record UnconfirmUpdate(PipelineGroup Group, double FrameMs, int Epoch, int Id) : IndexUpdate(Group, FrameMs, Epoch);
 

@@ -19,27 +19,19 @@ namespace Iris.App.Services;
 
 public sealed partial class WgcFrameSource : IFrameSource
 {
-    public const int StagingBucket = 64;
     private const int PoolBuffers = 2;
+    private const int CopyQueuePoolBuffers = PoolBuffers + LiveSettings.ReadbackFrames + LiveSettings.ReadbackScanSlots;
 
     private static readonly Guid GraphicsCaptureItemIid = new("79C3F95B-31F7-4EC2-A464-632EF5D30760");
     private static readonly Guid Texture2DIid = new("6F15AAF2-D208-4E89-9AB4-489535D34F9C");
 
-    private sealed class Slot
-    {
-        public Vd.ID3D11Texture2D? Staging;
-        public int StagingWidth;
-        public int StagingHeight;
-        public Mat? Bgr;
-    }
-
     [DllImport("d3d11.dll", EntryPoint = "CreateDirect3D11DeviceFromDXGIDevice")]
     private static extern int CreateDirect3D11DeviceFromDXGIDevice(IntPtr dxgiDevice, out IntPtr graphicsDevice);
 
-    private readonly List<Slot> _slots = new();
-    private readonly Slot _scan = new();
-    private Rect _pendingScanRegion;
-    private Mat? _pendingScanDestination;
+    private RegionReadback? _readback;
+    private CopyQueueReadback? _copyQueue;
+    private bool _copyQueueOn;
+    private bool _copyQueueWanted;
     private readonly AutoResetEvent _arrived = new(false);
     private Vd.ID3D11Device? _device;
     private Vd.ID3D11DeviceContext? _context;
@@ -64,19 +56,29 @@ public sealed partial class WgcFrameSource : IFrameSource
 
     public bool HideBorder { get; set; }
 
+    public bool UseCopyQueue { get; set; }
+
     public Action<string>? Log { get; set; }
 
-    public CopyTimes LastCopyTimes { get; private set; }
+    public WaitHandle? ArrivalHandle => _arrived;
+
+    public WaitHandle? CompletionHandle => _copyQueue?.CompletionHandle ?? _readback?.CompletionHandle;
+
+    public bool CanTakeFrame => _copyQueue?.CanTakeFrame ?? _readback?.CanTakeFrame ?? true;
+
+    public bool CanTakeScan => _copyQueue?.CanTakeScan ?? _readback?.CanTakeScan ?? true;
+
+    private int PoolBufferCount => _copyQueueOn ? CopyQueuePoolBuffers : PoolBuffers;
 
     public string Name => "window capture";
 
-    public FrameArrival AcquireNextFrame(IntPtr hwnd)
+    public FrameArrival AcquireNextFrame(IntPtr hwnd, int timeoutMs)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ReleaseHeldFrame();
         if (hwnd == IntPtr.Zero)
             return Unavailable("there is no game window");
-        if (_pool is not null && (_hwnd != hwnd || _itemClosed || _borderless != CaptureBorder.WantsBorderless(HideBorder)))
+        if (_pool is not null && (_hwnd != hwnd || _itemClosed || _borderless != CaptureBorder.WantsBorderless(HideBorder) || _copyQueueWanted != UseCopyQueue))
         {
             Release();
             _retryAtTick = 0;
@@ -113,7 +115,7 @@ public sealed partial class WgcFrameSource : IFrameSource
 
         try
         {
-            return Acquire(tick);
+            return Acquire(tick, timeoutMs);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -133,40 +135,32 @@ public sealed partial class WgcFrameSource : IFrameSource
         TryDispose(frame);
     }
 
-    public GrabRegionsResult CopyHeldFrameInto(IReadOnlyList<Rect> regions, bool firstIsScan, IReadOnlyList<Mat> destinations, bool deferScan = false)
+    public CopyIssue IssueHeldFrameCopies(IReadOnlyList<Rect> regions, bool firstIsScan)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (destinations.Count != regions.Count)
-            throw new ArgumentException("One destination for each region is needed.", nameof(destinations));
         var texture = _heldTexture;
-        if (texture is null)
+        if (texture is null || _device is null || _context is null)
         {
             ReleaseHeldFrame();
-            return GrabRegionsResult.Unavailable("no window frame was held");
+            return CopyIssue.Unavailable("no window frame was held");
         }
 
-        _pendingScanDestination = null;
-        LastCopyTimes = default;
-        var frameMs = _heldMs;
-        if (regions.Count == 0)
-        {
-            ReleaseHeldFrame();
-            return new GrabRegionsResult(GrabStatus.Ok, Array.Empty<Mat?>(), null, frameMs);
-        }
-
+        var started = Stopwatch.GetTimestamp();
         try
         {
             var description = texture.Description;
+            CaptureSharing.LogOnce(Log, "Window capture", description.MiscFlags);
             if (description.Format != Vx.Format.B8G8R8A8_UNorm)
             {
                 ReleaseHeldFrame();
                 Release();
                 _retryAtTick = Environment.TickCount64 + LiveSettings.CaptureRetryAfterFailureMs;
-                return GrabRegionsResult.Unavailable($"the window picture has pixel format {description.Format}, which IRIS cannot read (only 8 bit B8G8R8A8 is supported)");
+                return CopyIssue.Unavailable($"the window picture has pixel format {description.Format}, which IRIS cannot read (only 8 bit B8G8R8A8 is supported)");
             }
 
             var width = (int)description.Width;
             var height = (int)description.Height;
+            var inTexture = new List<Rect>(regions.Count);
             foreach (var region in regions)
             {
                 var left = region.X + _heldOffsetX;
@@ -174,108 +168,133 @@ public sealed partial class WgcFrameSource : IFrameSource
                 if (left < 0 || top < 0 || left + region.Width > width || top + region.Height > height)
                 {
                     ReleaseHeldFrame();
-                    return GrabRegionsResult.Unavailable($"a capture region is not inside the captured game window ({width}x{height}, client area at {_heldOffsetX},{_heldOffsetY})");
+                    return CopyIssue.Unavailable($"a capture region is not inside the captured game window ({width}x{height}, client area at {_heldOffsetX},{_heldOffsetY})");
                 }
+
+                inTexture.Add(new Rect(left, top, region.Width, region.Height));
             }
 
-            var slots = AssignSlots(regions, firstIsScan);
-            var started = Stopwatch.GetTimestamp();
-            try
+            var patches = firstIsScan ? inTexture.GetRange(1, inTexture.Count - 1) : inTexture;
+            Rect? scan = firstIsScan && inTexture.Count > 0 ? inTexture[0] : null;
+            var readback = EnsureReadback();
+            (ReadbackTicket Patches, ReadbackTicket Scan) tickets;
+            if (_copyQueue is { } copyQueue)
             {
-                var scanFirst = firstIsScan;
-                for (var i = scanFirst ? 1 : 0; i < regions.Count; i++)
-                    CopyRegion(texture, regions[i], slots[i]);
-                if (scanFirst)
+                var frame = _held!;
+                _held = null;
+                _heldTexture = null;
+                try
                 {
-                    if (regions.Count > 1)
-                        _context!.Flush();
-                    CopyRegion(texture, regions[0], slots[0]);
+                    tickets = copyQueue.Issue(texture, frame, patches, scan);
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    s_copyQueueBroken = true;
+                    _copyQueueOn = false;
+                    LogCopyQueueOnce("Window capture: the Direct3D 12 copy queue failed (" + ex.Message + "); D3D11 copies are used until IRIS starts again");
+                    _copyQueue = null;
+                    copyQueue.Dispose();
+                    return CopyIssue.Unavailable("the Direct3D 12 copy queue failed; D3D11 copies are used from the next picture");
                 }
             }
-            finally
+            else
             {
-                ReleaseHeldFrame();
-            }
-
-            var issued = Stopwatch.GetTimestamp();
-
-            var images = new List<Mat?>(regions.Count);
-            for (var i = 0; i < regions.Count; i++)
-                images.Add(destinations[i]);
-            for (var i = firstIsScan ? 1 : 0; i < regions.Count; i++)
-                ReadStaging(slots[i], regions[i], destinations[i], false);
-            LastCopyTimes = new CopyTimes(Stopwatch.GetElapsedTime(started, issued).TotalMilliseconds, Stopwatch.GetElapsedTime(issued).TotalMilliseconds);
-            if (firstIsScan)
-            {
-                if (deferScan)
+                try
                 {
-                    _pendingScanRegion = regions[0];
-                    _pendingScanDestination = destinations[0];
+                    tickets = readback!.Issue(texture, patches, scan);
                 }
-                else
+                finally
                 {
-                    ReadStaging(slots[0], regions[0], destinations[0], true);
+                    ReleaseHeldFrame();
                 }
             }
 
-            return new GrabRegionsResult(GrabStatus.Ok, images, null, frameMs);
+            return new CopyIssue(GrabStatus.Ok, null, tickets.Patches, tickets.Scan, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         }
         catch (Exception ex) when (ex is SharpGenException or COMException)
         {
             ReleaseHeldFrame();
             Release();
             _retryAtTick = Environment.TickCount64 + LiveSettings.CaptureRetryAfterFailureMs;
-            return GrabRegionsResult.Unavailable("window capture failed and will be set up again: " + ex.Message);
+            return CopyIssue.Unavailable("window capture failed and will be set up again: " + ex.Message);
         }
     }
 
-    private void CopyRegion(Vd.ID3D11Texture2D texture, Rect region, Slot slot)
-    {
-        EnsureStaging(slot, region.Width, region.Height);
-        var left = region.X + _heldOffsetX;
-        var top = region.Y + _heldOffsetY;
-        var box = new Vortice.Mathematics.Box(left, top, 0, left + region.Width, top + region.Height, 1);
-        _context!.CopySubresourceRegion(slot.Staging!, 0, 0, 0, 0, texture, 0, box);
-    }
+    public ReadbackState Poll(ReadbackTicket ticket) => _copyQueue?.Poll(ticket) ?? _readback?.Poll(ticket) ?? ReadbackState.Lost;
 
-    public bool ReadPendingScan(out string? problem)
+    public ReadbackState ReadInto(ReadbackTicket ticket, IReadOnlyList<Mat> destinations, bool raw, out string? problem)
     {
         problem = null;
-        var destination = _pendingScanDestination;
-        _pendingScanDestination = null;
-        if (destination is null)
-            return true;
         try
         {
-            if (_scan.Staging is null || _context is null)
-            {
-                problem = "the scan region's copy is gone";
-                return false;
-            }
-
-            ReadStaging(_scan, _pendingScanRegion, destination, true);
-            return true;
+            var state = _copyQueue?.Read(ticket, destinations, raw) ?? _readback?.Read(ticket, destinations, raw) ?? ReadbackState.Lost;
+            if (state == ReadbackState.Lost)
+                problem = "the copy of a capture region is gone";
+            return state;
         }
         catch (Exception ex) when (ex is SharpGenException or COMException)
         {
             Release();
             _retryAtTick = Environment.TickCount64 + LiveSettings.CaptureRetryAfterFailureMs;
-            problem = "reading the scan region failed and window capture will be set up again: " + ex.Message;
-            return false;
+            problem = "reading a capture region failed and window capture will be set up again: " + ex.Message;
+            return ReadbackState.Lost;
         }
+    }
+
+    public void Abandon(ReadbackTicket ticket)
+    {
+        _copyQueue?.Abandon(ticket);
+        _readback?.Abandon(ticket);
+    }
+
+    private RegionReadback? EnsureReadback()
+    {
+        if (_copyQueue is not null)
+            return null;
+        if (_readback is not null)
+            return _readback;
+        if (_copyQueueOn)
+        {
+            try
+            {
+                _copyQueue = new CopyQueueReadback(_device!, _context!, LiveSettings.ReadbackFrames, LiveSettings.ReadbackScanSlots, Log, logStats: AppVersion.Diagnostics);
+                LogCopyQueueOnce("Window capture: region copies come back through " + _copyQueue.MethodText);
+                RegionReadback.ForgetLoggedMethod();
+                return null;
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                s_copyQueueBroken = true;
+                _copyQueueOn = false;
+                LogCopyQueueOnce("Window capture: the Direct3D 12 copy queue could not be set up (" + ex.GetType().Name + ": " + ex.Message + "); D3D11 copies are used");
+            }
+        }
+
+        _readback = new RegionReadback(_device!, _context!, LiveSettings.ReadbackFrames, LiveSettings.ReadbackScanSlots);
+        RegionReadback.LogMethodOnce(Log, "Window capture", _readback);
+        return _readback;
+    }
+
+    private static string? s_copyQueueLogged;
+    private static bool s_copyQueueBroken;
+
+    private void LogCopyQueueOnce(string text)
+    {
+        if (Log is null || text == s_copyQueueLogged)
+            return;
+        s_copyQueueLogged = text;
+        Log(text);
     }
 
     public void Release()
     {
-        _pendingScanDestination = null;
         ReleaseHeldFrame();
-        foreach (var slot in AllSlots())
-        {
-            TryDispose(slot.Staging);
-            slot.Staging = null;
-            slot.StagingWidth = 0;
-            slot.StagingHeight = 0;
-        }
+        _readback?.Dispose();
+        _readback = null;
+        _copyQueue?.Dispose();
+        _copyQueue = null;
+        if (CopyQueueReadback.Abandoned)
+            s_copyQueueBroken = true;
 
         var session = _session;
         var pool = _pool;
@@ -312,107 +331,7 @@ public sealed partial class WgcFrameSource : IFrameSource
         if (_disposed)
             return;
         Release();
-        foreach (var slot in AllSlots())
-        {
-            slot.Bgr?.Dispose();
-            slot.Bgr = null;
-        }
-
-        _slots.Clear();
         _disposed = true;
         _arrived.Dispose();
-    }
-
-    private IEnumerable<Slot> AllSlots()
-    {
-        yield return _scan;
-        foreach (var slot in _slots)
-            yield return slot;
-    }
-
-    private Slot[] AssignSlots(IReadOnlyList<Rect> regions, bool firstIsScan)
-    {
-        var result = new Slot?[regions.Count];
-        var used = new HashSet<Slot>();
-        var start = 0;
-        if (firstIsScan && regions.Count > 0)
-        {
-            result[0] = _scan;
-            used.Add(_scan);
-            start = 1;
-        }
-
-        for (var i = start; i < regions.Count; i++)
-        {
-            var width = Bucket(regions[i].Width);
-            var height = Bucket(regions[i].Height);
-            result[i] = _slots.FirstOrDefault(slot => !used.Contains(slot) && slot.Staging is not null && slot.StagingWidth == width && slot.StagingHeight == height);
-            if (result[i] is not null)
-                used.Add(result[i]!);
-        }
-
-        for (var i = start; i < regions.Count; i++)
-        {
-            if (result[i] is not null)
-                continue;
-            var slot = _slots.FirstOrDefault(s => !used.Contains(s));
-            if (slot is null)
-            {
-                slot = new Slot();
-                _slots.Add(slot);
-            }
-
-            result[i] = slot;
-            used.Add(slot);
-        }
-
-        return result!;
-    }
-
-    private static int Bucket(int size) => (size + StagingBucket - 1) / StagingBucket * StagingBucket;
-
-    private void EnsureStaging(Slot slot, int width, int height)
-    {
-        var bucketWidth = Bucket(width);
-        var bucketHeight = Bucket(height);
-        if (slot.Staging is not null && slot.StagingWidth == bucketWidth && slot.StagingHeight == bucketHeight)
-            return;
-        TryDispose(slot.Staging);
-        slot.Staging = null;
-        var description = new Vd.Texture2DDescription
-        {
-            Width = (uint)bucketWidth,
-            Height = (uint)bucketHeight,
-            MipLevels = 1,
-            ArraySize = 1,
-            Format = Vx.Format.B8G8R8A8_UNorm,
-            SampleDescription = new Vx.SampleDescription(1, 0),
-            Usage = Vd.ResourceUsage.Staging,
-            BindFlags = Vd.BindFlags.None,
-            CPUAccessFlags = Vd.CpuAccessFlags.Read,
-            MiscFlags = Vd.ResourceOptionFlags.None,
-        };
-        slot.Staging = _device!.CreateTexture2D(description);
-        slot.StagingWidth = bucketWidth;
-        slot.StagingHeight = bucketHeight;
-    }
-
-    private void ReadStaging(Slot slot, Rect region, Mat destination, bool raw)
-    {
-        var staging = slot.Staging!;
-        var context = _context!;
-        var mapped = context.Map(staging, 0, Vd.MapMode.Read, Vd.MapFlags.None);
-        try
-        {
-            using var source = Mat.FromPixelData(region.Height, region.Width, MatType.CV_8UC4, mapped.DataPointer, mapped.RowPitch);
-            if (raw)
-                source.CopyTo(destination);
-            else
-                Cv2.CvtColor(source, destination, ColorConversionCodes.BGRA2BGR);
-        }
-        finally
-        {
-            context.Unmap(staging, 0);
-        }
     }
 }

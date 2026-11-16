@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace Iris.App.Services;
 
@@ -181,7 +182,7 @@ internal sealed class LayeredWindow : IDisposable
         _bits = IntPtr.Zero;
     }
 
-    private static readonly object ClassGate = new();
+    private static readonly Lock ClassGate = new();
 
     private static void RegisterClassOnce(IntPtr instance)
     {

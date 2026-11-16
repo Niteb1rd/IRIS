@@ -74,14 +74,6 @@ public sealed partial class OverlayController : IDisposable
 
     public event EventHandler? TestStateChanged;
 
-    public bool IsOverlayDisabled => _services.IsOverlayDisabled;
-
-    public event EventHandler OverlayDisabledChanged
-    {
-        add => _services.OverlayDisabledChanged += value;
-        remove => _services.OverlayDisabledChanged -= value;
-    }
-
     public bool IsTestRunning => _testModel is not null;
 
     public TestOverlayPart TestPart { get; private set; }
@@ -148,7 +140,7 @@ public sealed partial class OverlayController : IDisposable
         var nowMs = StopwatchClock.Shared.NowMs;
         if (renderLoop)
             NotePickup(index, snapshot, nowMs);
-        return IndexModel.ModelAt(snapshot, nowMs + refreshPeriodMs, _pipeSettings, _liveSettings, previous, _services.Settings.TrackingLossDisplaySeconds * 1000.0);
+        return IndexModel.ModelAt(snapshot, nowMs + refreshPeriodMs, _pipeSettings, _liveSettings, previous, _services.Settings.TrackingLossDisplaySeconds * 1000.0, refreshPeriodMs);
     }
 
     private void TraceModel(OverlayModel model, double refreshPeriodMs)
@@ -168,15 +160,15 @@ public sealed partial class OverlayController : IDisposable
         foreach (var item in model.Brackets)
             t.Item().Int("mid", item.MarkerId).Box("b", item.Box);
         t.EndArray().Array("markers");
-        var withheld = IndexModel.WithheldDuplicates(snapshot.Markers);
+        var withheld = IndexModel.WithheldDuplicates(snapshot.Markers, at, _pipeSettings);
         foreach (var marker in snapshot.Markers)
         {
             if (marker.Status != PlateStatus.Confirmed)
                 continue;
-            var (cx, top) = IndexModel.PositionAt(marker, snapshot, at, _pipeSettings, _liveSettings);
-            var state = !IndexModel.IsListed(marker) ? "notListed" : !marker.HasTrackingFix ? "noFix" : !IndexModel.IsDrawable(marker, at, _pipeSettings) ? "stale"
+            var (cx, top) = IndexModel.PositionAt(marker, snapshot, at, _pipeSettings, _liveSettings, refreshPeriodMs);
+            var state = !IndexModel.IsListed(marker) ? "notListed" : marker.MovedUnseen ? "movedUnseen" : !IndexModel.IsDrawable(marker, at, _pipeSettings) ? "stale"
                 : (withheld is not null && withheld.Contains(marker.Id)) ? "duplicateName" : "drawnOrOutside";
-            t.Item().Int("mid", marker.Id).Str("name", marker.Name).Str("state", state).Num("age", at - marker.LastFoundMs, 1).Int("missed", marker.MissedFrames).Num("lineMs", marker.LineMs)
+            t.Item().Int("mid", marker.Id).Str("name", marker.Name).Str("state", state).Num("age", at - marker.LastFoundMs, 1).Int("missed", marker.MissedFrames).Bool("held", !double.IsNaN(marker.MissKnownMs)).Num("lineMs", marker.LineMs)
                 .Num("shiftX", cx - marker.CentreX, 1).Num("shiftY", top - marker.Top, 1).Str("rsi", marker.Identity?.Rsi.ToString());
         }
 
@@ -357,7 +349,7 @@ public sealed partial class OverlayController : IDisposable
         if (toast is not null || liveModel.Note is not null || liveModel.Panel.Count > 0)
             EnsurePanelWindow().Present(WithNotes(liveModel), snapshot.Bounds, settings, toast);
         else
-            _panelWindow?.HideOverlay();
+            _panelWindow?.Present(liveModel, snapshot.Bounds, settings, toast);
 
         if (liveModel.Mining is not null)
             EnsureMiningWindow().Present(liveModel, snapshot.Bounds, settings);

@@ -97,6 +97,12 @@ public sealed partial class ScanWorker
     {
         if (Matcher is not { } matcher || !_keep.TryGetValue(marker.Id, out var keep) || keep.Template.Empty() || crop.Image.Empty() || !ToGrey(crop.Image))
             return false;
+        if (!tracked && frameMs - marker.LastFoundMs >= _settings.TemplateKeepAliveMaxMs)
+        {
+            _templateWhy = "lostTooLong";
+            _stats?.AddTemplateTooLong();
+            return false;
+        }
         var centreX = keep.Following ? keep.CentreX : px + marker.Width / 2.0;
         var top = keep.Following ? keep.Top : py;
         var tw = keep.Template.Width;
@@ -104,10 +110,14 @@ public sealed partial class ScanWorker
         var reach = (int)Math.Ceiling(Math.Max(_settings.MinSearchReachPx, marker.Height));
         if (!tracked)
             reach = Math.Max(reach, LostReach(marker, keep, frameMs));
-        if (TemplateWindow(keep, rel, crop, centreX, top, reach) is not { } window)
-            return false;
+        var window = TemplateWindow(keep, rel, crop, centreX, top, reach);
+        if (!tracked)
+        {
+            _templateClipped = window is not { } searched || searched.Width < tw + 2 * reach || searched.Height < th + 2 * reach;
+            _stats?.AddLostTemplateSearch(_templateClipped);
+        }
 
-        if (matcher.Match(_grey, keep.Template, window) is not { } hit)
+        if (window is not { } area || matcher.Match(_grey, keep.Template, area) is not { } hit)
             return false;
         var score = double.IsFinite(hit.Score) ? hit.Score : -1.0;
         _templateScore = score;

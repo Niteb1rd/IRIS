@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Iris.Core.Pipeline;
 
 namespace Iris.App.Services;
@@ -11,7 +12,7 @@ internal static class DisplayTiming
     private const int DevModeSize = 220;
     private const int MaxCachedMonitors = 16;
 
-    private static readonly object Gate = new();
+    private static readonly Lock Gate = new();
     private static readonly Dictionary<IntPtr, (long AtTick, double PeriodMs)> Cache = new();
 
     public static double RefreshPeriodMs(IntPtr gameWindow)

@@ -37,12 +37,16 @@ public sealed class UpdateCheckClient
         _log = log ?? NullLog.Instance;
     }
 
+    public TimeSpan Timeout { get; init; } = CacheSettings.UpdateCheckTimeout;
+
     public static HttpClient CreateHttpClient() =>
         new(new HttpClientHandler { AllowAutoRedirect = false, AutomaticDecompression = DecompressionMethods.All }) { Timeout = CacheSettings.UpdateCheckTimeout };
 
     public async Task<UpdateCheckResult> CheckAsync(ReleaseVersion current, CancellationToken ct = default)
     {
         var stopwatch = Stopwatch.StartNew();
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(Timeout);
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, CacheSettings.UpdateCheckUrl);
@@ -50,7 +54,7 @@ public sealed class UpdateCheckClient
             request.Headers.TryAddWithoutValidation("Accept", "application/vnd.github+json");
             request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
 
-            using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, limit.Token).ConfigureAwait(false);
             int code = (int)response.StatusCode;
             if (code == 404)
                 return Fail("no public release yet (HTTP 404)", stopwatch.Elapsed);
@@ -60,11 +64,11 @@ public sealed class UpdateCheckClient
                 return Fail("answer too large", stopwatch.Elapsed);
 
             using var body = new MemoryStream();
-            await using (var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
+            await using (var stream = await response.Content.ReadAsStreamAsync(limit.Token).ConfigureAwait(false))
             {
                 var chunk = new byte[16 * 1024];
                 int read;
-                while ((read = await stream.ReadAsync(chunk.AsMemory(), ct).ConfigureAwait(false)) > 0)
+                while ((read = await stream.ReadAsync(chunk.AsMemory(), limit.Token).ConfigureAwait(false)) > 0)
                 {
                     body.Write(chunk, 0, read);
                     if (body.Length > CacheSettings.UpdateCheckMaxBytes)
@@ -87,7 +91,7 @@ public sealed class UpdateCheckClient
         }
         catch (OperationCanceledException)
         {
-            return Fail($"no answer within {CacheSettings.UpdateCheckTimeout.TotalSeconds:0} seconds", stopwatch.Elapsed);
+            return Fail($"no answer within {Timeout.TotalSeconds:0} seconds", stopwatch.Elapsed);
         }
         catch (HttpRequestException ex)
         {

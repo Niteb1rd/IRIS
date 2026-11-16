@@ -2,7 +2,7 @@ namespace Iris.Core.Detection;
 
 public sealed class SessionExclusions
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly HashSet<string> _names = new(StringComparer.OrdinalIgnoreCase);
 
     public bool Contains(string? name)

@@ -195,7 +195,12 @@ public sealed class RsiClient : IRsiClient
                 var retryAfter = code is 429 or 503 or 403 ? ReadRetryAfter(httpResponse.Headers.RetryAfter) : null;
                 string? text = null;
                 if (code >= 200 && code <= 299)
-                    text = await httpResponse.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
+                {
+                    text = await ReadCappedAsync(httpResponse.Content, timeout.Token).ConfigureAwait(false);
+                    if (text is null)
+                        return new Response(uri.AbsoluteUri, code, null, $"page too large (over {CacheSettings.RsiMaxBodyBytes / (1024 * 1024)} MB)", stopwatch.Elapsed, retryAfter, Turn: turn);
+                }
+
                 return new Response(uri.AbsoluteUri, code, text, null, stopwatch.Elapsed, retryAfter, Turn: turn);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -222,6 +227,48 @@ public sealed class RsiClient : IRsiClient
         }
 
         return new Response(current, null, null, $"too many redirects (more than {CacheSettings.RsiMaxRedirects})");
+    }
+
+    private static async Task<string?> ReadCappedAsync(HttpContent content, CancellationToken ct)
+    {
+        if (content.Headers.ContentLength is > CacheSettings.RsiMaxBodyBytes)
+            return null;
+        using var body = new MemoryStream();
+        await using (var stream = await content.ReadAsStreamAsync(ct).ConfigureAwait(false))
+        {
+            var chunk = new byte[64 * 1024];
+            int read;
+            while ((read = await stream.ReadAsync(chunk.AsMemory(), ct).ConfigureAwait(false)) > 0)
+            {
+                if (body.Length + read > CacheSettings.RsiMaxBodyBytes)
+                    return null;
+                body.Write(chunk, 0, read);
+            }
+        }
+
+        return Decode(body, content.Headers.ContentType?.CharSet);
+    }
+
+    private static string Decode(MemoryStream body, string? charset)
+    {
+        var encoding = Encoding.UTF8;
+        if (charset is { Length: > 0 })
+        {
+            try
+            {
+                encoding = Encoding.GetEncoding(charset.Trim('"'));
+            }
+            catch (ArgumentException)
+            {
+            }
+        }
+
+        var bytes = body.GetBuffer();
+        var start = 0;
+        var preamble = encoding.Preamble;
+        if (preamble.Length > 0 && body.Length >= preamble.Length && bytes.AsSpan(0, preamble.Length).SequenceEqual(preamble))
+            start = preamble.Length;
+        return encoding.GetString(bytes, start, (int)body.Length - start);
     }
 
     private static RsiResult<T> Interpret<T>(Response response, Func<string, RsiResult<T>> parse)

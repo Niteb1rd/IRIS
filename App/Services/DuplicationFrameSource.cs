@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Iris.Core.Pipeline;
 using OpenCvSharp;
 using SharpGen.Runtime;
@@ -14,17 +15,7 @@ namespace Iris.App.Services;
 
 public sealed partial class DuplicationFrameSource : IFrameSource
 {
-    private sealed class Slot
-    {
-        public Vd.ID3D11Texture2D? Staging;
-        public int StagingWidth;
-        public int StagingHeight;
-    }
-
-    private readonly List<Slot> _slots = new();
-    private readonly Slot _scan = new();
-    private Rect _pendingScanRegion;
-    private Mat? _pendingScanDestination;
+    private RegionReadback? _readback;
     private Vd.ID3D11Device? _device;
     private Vd.ID3D11DeviceContext? _context;
     private Vx.IDXGIOutputDuplication? _duplication;
@@ -67,7 +58,13 @@ public sealed partial class DuplicationFrameSource : IFrameSource
 
     public Action<string>? Log { get; set; }
 
-    public CopyTimes LastCopyTimes { get; private set; }
+    public WaitHandle? ArrivalHandle => null;
+
+    public WaitHandle? CompletionHandle => _readback?.CompletionHandle;
+
+    public bool CanTakeFrame => _readback?.CanTakeFrame ?? true;
+
+    public bool CanTakeScan => _readback?.CanTakeScan ?? true;
 
     public double LastUpdatedShare { get; private set; } = double.NaN;
 
@@ -80,7 +77,7 @@ public sealed partial class DuplicationFrameSource : IFrameSource
         return skipped;
     }
 
-    public FrameArrival AcquireNextFrame(IntPtr hwnd)
+    public FrameArrival AcquireNextFrame(IntPtr hwnd, int timeoutMs)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ReleaseHeldFrame();
@@ -122,7 +119,7 @@ public sealed partial class DuplicationFrameSource : IFrameSource
 
         try
         {
-            return Acquire(hwnd);
+            return Acquire(hwnd, timeoutMs);
         }
         catch (Exception ex) when (ex is SharpGenException or COMException)
         {
@@ -149,34 +146,24 @@ public sealed partial class DuplicationFrameSource : IFrameSource
         TryDispose(resource);
     }
 
-    public GrabRegionsResult CopyHeldFrameInto(IReadOnlyList<Rect> regions, bool firstIsScan, IReadOnlyList<Mat> destinations, bool deferScan = false)
+    public CopyIssue IssueHeldFrameCopies(IReadOnlyList<Rect> regions, bool firstIsScan)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (destinations.Count != regions.Count)
-            throw new ArgumentException("One destination for each region is needed.", nameof(destinations));
         var resource = _held;
-        if (resource is null || _duplication is null)
+        if (resource is null || _duplication is null || _device is null || _context is null)
         {
             ReleaseHeldFrame();
-            return GrabRegionsResult.Unavailable("no screen frame was held");
-        }
-
-        _pendingScanDestination = null;
-        LastCopyTimes = default;
-        var frameMs = _heldMs;
-        if (regions.Count == 0)
-        {
-            ReleaseHeldFrame();
-            return new GrabRegionsResult(GrabStatus.Ok, Array.Empty<Mat?>(), null, frameMs);
+            return CopyIssue.Unavailable("no screen frame was held");
         }
 
         var started = Stopwatch.GetTimestamp();
         try
         {
-            Slot[] slots;
+            (ReadbackTicket Patches, ReadbackTicket Scan) tickets;
             using (var texture = resource.QueryInterface<Vd.ID3D11Texture2D>())
             {
                 var description = texture.Description;
+                CaptureSharing.LogOnce(Log, "Desktop duplication", description.MiscFlags);
                 var width = (int)description.Width;
                 var height = (int)description.Height;
                 if (width != _monitorBounds.Width || height != _monitorBounds.Height)
@@ -184,7 +171,7 @@ public sealed partial class DuplicationFrameSource : IFrameSource
                     ReleaseHeldFrame();
                     Release();
                     _retryAtTick = Environment.TickCount64 + LiveSettings.CaptureRetryAfterFailureMs;
-                    return GrabRegionsResult.Unavailable($"the screen picture is {width}x{height}, not the {_monitorBounds.Width}x{_monitorBounds.Height} of the monitor (a rotated screen is not supported)");
+                    return CopyIssue.Unavailable($"the screen picture is {width}x{height}, not the {_monitorBounds.Width}x{_monitorBounds.Height} of the monitor (a rotated screen is not supported)");
                 }
 
                 if (description.Format != Vx.Format.B8G8R8A8_UNorm)
@@ -192,9 +179,10 @@ public sealed partial class DuplicationFrameSource : IFrameSource
                     ReleaseHeldFrame();
                     Release();
                     _retryAtTick = Environment.TickCount64 + LiveSettings.CaptureRetryAfterFailureMs;
-                    return GrabRegionsResult.Unavailable($"the screen picture has pixel format {description.Format}, which IRIS cannot read (only 8 bit B8G8R8A8 is supported)");
+                    return CopyIssue.Unavailable($"the screen picture has pixel format {description.Format}, which IRIS cannot read (only 8 bit B8G8R8A8 is supported)");
                 }
 
+                var inTexture = new List<Rect>(regions.Count);
                 foreach (var region in regions)
                 {
                     var left = region.X + _heldOffsetX;
@@ -202,93 +190,66 @@ public sealed partial class DuplicationFrameSource : IFrameSource
                     if (left < 0 || top < 0 || left + region.Width > width || top + region.Height > height)
                     {
                         ReleaseHeldFrame();
-                        return GrabRegionsResult.Unavailable(
+                        return CopyIssue.Unavailable(
                             $"the game window reaches past its screen ({width}x{height} at {_monitorBounds.X},{_monitorBounds.Y}; game picture from {_heldOffsetX + _monitorBounds.X},{_heldOffsetY + _monitorBounds.Y}): it must be completely on one monitor");
                     }
+
+                    inTexture.Add(new Rect(left, top, region.Width, region.Height));
                 }
 
-                slots = AssignSlots(regions, firstIsScan);
-                for (var i = firstIsScan ? 1 : 0; i < regions.Count; i++)
-                    CopyRegion(texture, regions[i], slots[i]);
-                if (firstIsScan)
-                {
-                    if (regions.Count > 1)
-                        _context!.Flush();
-                    CopyRegion(texture, regions[0], slots[0]);
-                }
+                var readback = EnsureReadback();
+                tickets = readback.Issue(texture, firstIsScan ? inTexture.GetRange(1, inTexture.Count - 1) : inTexture, firstIsScan && inTexture.Count > 0 ? inTexture[0] : null);
             }
 
             ReleaseHeldFrame();
-            var issued = Stopwatch.GetTimestamp();
-
-            var images = new List<Mat?>(regions.Count);
-            for (var i = 0; i < regions.Count; i++)
-                images.Add(destinations[i]);
-            for (var i = firstIsScan ? 1 : 0; i < regions.Count; i++)
-                ReadStaging(slots[i], regions[i], destinations[i], false);
-            LastCopyTimes = new CopyTimes(Stopwatch.GetElapsedTime(started, issued).TotalMilliseconds, Stopwatch.GetElapsedTime(issued).TotalMilliseconds);
-            if (firstIsScan)
-            {
-                if (deferScan)
-                {
-                    _pendingScanRegion = regions[0];
-                    _pendingScanDestination = destinations[0];
-                }
-                else
-                {
-                    ReadStaging(slots[0], regions[0], destinations[0], true);
-                }
-            }
-
-            return new GrabRegionsResult(GrabStatus.Ok, images, null, frameMs);
+            return new CopyIssue(GrabStatus.Ok, null, tickets.Patches, tickets.Scan, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         }
         catch (Exception ex) when (ex is SharpGenException or COMException)
         {
             ReleaseHeldFrame();
             Release();
             _retryAtTick = Environment.TickCount64 + LiveSettings.CaptureRetryAfterFailureMs;
-            return GrabRegionsResult.Unavailable("desktop duplication failed and will be set up again: " + ex.Message);
+            return CopyIssue.Unavailable("desktop duplication failed and will be set up again: " + ex.Message);
         }
     }
 
-    public bool ReadPendingScan(out string? problem)
+    public ReadbackState Poll(ReadbackTicket ticket) => _readback?.Poll(ticket) ?? ReadbackState.Lost;
+
+    public ReadbackState ReadInto(ReadbackTicket ticket, IReadOnlyList<Mat> destinations, bool raw, out string? problem)
     {
         problem = null;
-        var destination = _pendingScanDestination;
-        _pendingScanDestination = null;
-        if (destination is null)
-            return true;
         try
         {
-            if (_scan.Staging is null || _context is null)
-            {
-                problem = "the scan region's copy is gone";
-                return false;
-            }
-
-            ReadStaging(_scan, _pendingScanRegion, destination, true);
-            return true;
+            var state = _readback?.Read(ticket, destinations, raw) ?? ReadbackState.Lost;
+            if (state == ReadbackState.Lost)
+                problem = "the copy of a capture region is gone";
+            return state;
         }
         catch (Exception ex) when (ex is SharpGenException or COMException)
         {
             Release();
             _retryAtTick = Environment.TickCount64 + LiveSettings.CaptureRetryAfterFailureMs;
-            problem = "reading the scan region failed and desktop duplication will be set up again: " + ex.Message;
-            return false;
+            problem = "reading a capture region failed and desktop duplication will be set up again: " + ex.Message;
+            return ReadbackState.Lost;
         }
+    }
+
+    public void Abandon(ReadbackTicket ticket) => _readback?.Abandon(ticket);
+
+    private RegionReadback EnsureReadback()
+    {
+        if (_readback is not null)
+            return _readback;
+        _readback = new RegionReadback(_device!, _context!, LiveSettings.ReadbackFrames, LiveSettings.ReadbackScanSlots);
+        RegionReadback.LogMethodOnce(Log, "Desktop duplication", _readback);
+        return _readback;
     }
 
     public void Release()
     {
-        _pendingScanDestination = null;
         ReleaseHeldFrame();
-        foreach (var slot in AllSlots())
-        {
-            TryDispose(slot.Staging);
-            slot.Staging = null;
-            slot.StagingWidth = 0;
-            slot.StagingHeight = 0;
-        }
+        _readback?.Dispose();
+        _readback = null;
 
         TryDispose(_duplication);
         _duplication = null;
@@ -307,7 +268,6 @@ public sealed partial class DuplicationFrameSource : IFrameSource
         if (_disposed)
             return;
         Release();
-        _slots.Clear();
         _disposed = true;
     }
 
@@ -387,7 +347,7 @@ public sealed partial class DuplicationFrameSource : IFrameSource
         Log("Desktop duplication: " + layout);
     }
 
-    private FrameArrival Acquire(IntPtr hwnd)
+    private FrameArrival Acquire(IntPtr hwnd, int timeoutMs)
     {
         var duplication = _duplication!;
         Result acquired;
@@ -396,7 +356,7 @@ public sealed partial class DuplicationFrameSource : IFrameSource
         long accumulated = 0;
         try
         {
-            acquired = duplication.AcquireNextFrame(LiveSettings.CaptureAcquireTimeoutMs, out var info, out resource);
+            acquired = duplication.AcquireNextFrame((uint)Math.Max(0, timeoutMs), out var info, out resource);
             presentTicks = info.LastPresentTime;
             accumulated = info.AccumulatedFrames;
         }

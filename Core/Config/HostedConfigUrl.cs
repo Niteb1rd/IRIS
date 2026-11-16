@@ -15,6 +15,20 @@ public static class HostedConfigUrl
             return "That web address has no site name.";
         if (uri.UserInfo.Length > 0)
             return "Addresses with a user name or password are not allowed.";
+        if (!IsPublicSiteName(uri))
+            return "Use the address of a public website (not an IP address, localhost or a local network name).";
         return null;
+    }
+
+    private static bool IsPublicSiteName(Uri uri)
+    {
+        if (uri.HostNameType is UriHostNameType.IPv4 or UriHostNameType.IPv6 or UriHostNameType.Basic or UriHostNameType.Unknown)
+            return false;
+        var host = uri.IdnHost.TrimEnd('.');
+        if (host.Length == 0 || !host.Contains('.'))
+            return false;
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return true;
     }
 }

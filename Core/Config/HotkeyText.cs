@@ -19,6 +19,23 @@ public static class HotkeyText
 
     public static string? EscapeProblem(Hotkey hotkey) => hotkey.VirtualKey == EscapeKey ? EscapeError : null;
 
+    public static bool EditsText(Hotkey hotkey)
+    {
+        var key = hotkey.VirtualKey;
+        var mods = hotkey.Modifiers;
+        var alt = mods.HasFlag(HotkeyModifiers.Alt);
+        var ctrl = mods.HasFlag(HotkeyModifiers.Control);
+        var character = key is >= 0x41 and <= 0x5A or >= 0x30 and <= 0x39 or >= 0x60 and <= 0x69 or 0x20;
+        if (character)
+        {
+            if (alt == ctrl)
+                return true;
+            return ctrl && key is 0x41 or 0x43 or 0x56 or 0x58 or 0x59 or 0x5A;
+        }
+        var editing = key is 0x0D or 0x08 or 0x2D or 0x2E or >= 0x21 and <= 0x28;
+        return editing && !alt;
+    }
+
     private static readonly Dictionary<string, int> KeyByName = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<int, string> NameByKey = new();
 

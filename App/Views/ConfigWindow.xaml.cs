@@ -49,6 +49,8 @@ public partial class ConfigWindow : Window, IImportHost
     private bool _visibleInCaptureStored;
     private bool _hideBorderStored;
 
+    private bool _loadingWidths;
+
     private bool _ready;
 
     private string? _copiedInvalidKey;
@@ -85,9 +87,9 @@ public partial class ConfigWindow : Window, IImportHost
         ConfigureSlider(DossierWidthSlider, AppSettings.DossierWidthPercentMin, AppSettings.DossierWidthPercentMax);
         ConfigureSlider(PanelTextSizeSlider, AppSettings.PanelTextSizeMin, AppSettings.PanelTextSizeMax);
         ConfigureSlider(MiningZoomSlider, AppSettings.MiningLabelZoomPercentMin, AppSettings.MiningLabelZoomPercentMax);
+        ConfigureSlider(SoundVolumeSlider, AppSettings.SoundVolumePercentMin, AppSettings.SoundVolumePercentMax);
         ConfigureSlider(PanelRightGapSlider, AppSettings.PanelRightGapPercentMin, AppSettings.PanelRightGapPercentMax);
-        ConfigureSlider(PanelTopGapSlider, AppSettings.PanelTopGapPercentMin, AppSettings.PanelTopGapPercentMax);
-        ConfigureSlider(TrackingFpsSlider, AppSettings.NameplateTrackingFpsMin, AppSettings.NameplateTrackingFpsMax);
+        ConfigureSlider(PanelVerticalGapSlider, AppSettings.PanelVerticalGapPercentMin, AppSettings.PanelVerticalGapPercentMax);
         foreach (var slider in new[] { BoundaryTopSlider, BoundaryBottomSlider, BoundaryLeftSlider, BoundaryRightSlider })
             ConfigureSlider(slider, AppSettings.BoundaryPercentMin, AppSettings.BoundaryPercentMax);
         foreach (var percent in AppSettings.SettingsWindowScales)

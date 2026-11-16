@@ -158,6 +158,22 @@ public static class Fingerprint
         return double.IsNegativeInfinity(best) ? 0.0 : best;
     }
 
+    public static bool HasSolidRun(int[] ink, double rowHeight, double share, double minWidth)
+    {
+        if (!(rowHeight > 0))
+            return false;
+        var needed = share * rowHeight;
+        var run = 0;
+        foreach (var column in ink)
+        {
+            run = column >= needed ? run + 1 : 0;
+            if (run > 0 && run >= minWidth)
+                return true;
+        }
+
+        return false;
+    }
+
     private static double[] Resample(int[] values, int length)
     {
         var result = new double[length];

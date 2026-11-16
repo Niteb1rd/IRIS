@@ -16,7 +16,7 @@ public sealed class IndexCounters
     public const int TextsPerGroup = 5;
     public const int MaxSamples = 20000;
 
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly int[] _rejected = new int[PipelineStats.GroupCount];
     private readonly int[] _expired = new int[PipelineStats.GroupCount];
     private readonly int[] _textsKept = new int[PipelineStats.GroupCount];

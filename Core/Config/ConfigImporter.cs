@@ -118,8 +118,29 @@ public static class ConfigImporter
 
     public static ImportResult Import(string listFilePath, SocialConfig imported, ImportMode mode, IClock clock, WatchedFile? watched = null)
     {
-        var ranks = ColorRanks.Normalize(NoMatchRule.Normalized(imported));
+        var ranks = Prepared(imported);
         return ImportCore(listFilePath, ranks.Config, mode, clock, watched).WithRanksFixed(ranks.Fixed);
+    }
+
+    public static SocialConfig Preview(SocialConfig? current, SocialConfig imported, ImportMode mode)
+    {
+        var prepared = Prepared(imported).Config;
+        return current is not null && mode is ImportMode.Merge or ImportMode.MergeImportedWins
+            ? Merged(current, prepared, mode == ImportMode.MergeImportedWins).Config
+            : prepared;
+    }
+
+    private static RankFix Prepared(SocialConfig imported) => ColorRanks.Normalize(NoMatchRule.Normalized(imported));
+
+    private static (MergeResult Merge, SocialConfig Config) Merged(SocialConfig current, SocialConfig imported, bool importedWins)
+    {
+        var local = ColorRanks.Normalize(current).Config;
+        var merged = SocialConfigMerger.Merge(local, imported, importedWins);
+        var (first, second) = importedWins ? (imported, local) : (local, imported);
+        var config = ColorRanks.WithRankings(merged.Config,
+            ColorRanks.Combine(ColorRanks.OrgRanking(first), ColorRanks.OrgRanking(second)),
+            ColorRanks.Combine(ColorRanks.RuleRanking(first), ColorRanks.RuleRanking(second)));
+        return (merged, config);
     }
 
     private static ImportResult ImportCore(string listFilePath, SocialConfig imported, ImportMode mode, IClock clock, WatchedFile? watched)
@@ -151,13 +172,7 @@ public static class ConfigImporter
                     return ImportResult.Fail(mode,
                         "Your current list file has problems, so it cannot be merged safely. Choose \"Replace, Backup Local Config\" in Settings > Shared Config instead.");
 
-                var importedWins = mode == ImportMode.MergeImportedWins;
-                var local = ColorRanks.Normalize(current.Config).Config;
-                var merged = SocialConfigMerger.Merge(local, imported, importedWins);
-                var (first, second) = importedWins ? (imported, local) : (local, imported);
-                var config = ColorRanks.WithRankings(merged.Config,
-                    ColorRanks.Combine(ColorRanks.OrgRanking(first), ColorRanks.OrgRanking(second)),
-                    ColorRanks.Combine(ColorRanks.RuleRanking(first), ColorRanks.RuleRanking(second)));
+                var (merged, config) = Merged(current.Config, imported, mode == ImportMode.MergeImportedWins);
                 var saved = SocialListStore.Save(listFilePath, config, watched);
                 return saved.Success
                     ? ImportResult.Done(mode, true, config, merged.AddedPlayers, merged.AddedOrgs, merged.AddedRules, merged.SkippedDuplicates, null)
@@ -258,6 +273,8 @@ public static class ConfigImporter
             var check = SocialConfigToml.Read(text);
             if (!check.IsValid)
                 return SaveResult.Failed("The list is not valid and was not exported: " + string.Join(" ", check.Errors));
+            if (SocialListStore.IsTooLarge(text))
+                return SaveResult.Failed("The list would be larger than 1 MB, which IRIS does not import, so it was not exported.");
 
             AtomicFile.WriteText(path, text, keepBackup: false);
             return SaveResult.Ok();

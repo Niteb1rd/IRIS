@@ -66,7 +66,15 @@ public sealed record LiveSettings
 
     public const long FirstFrameTimeoutMs = 5000;
 
-    public const int FramePoolSize = 9;
+    public const int FramePoolSize = 11;
+
+    public const int ReadbackFrames = 3;
+
+    public const int ReadbackScanSlots = 2;
+
+    public const double ReadbackPollMs = 1.0;
+
+    public const double ReadbackFrameGiveUpMs = 250.0;
 
     public const int CaptureAcquireTimeoutMs = 50;
 

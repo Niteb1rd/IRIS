@@ -13,13 +13,13 @@ IRIS.exe is not code-signed, so Windows SmartScreen may show "Windows protected 
 1. Run IRIS-installer.exe, or unzip IRIS-portable.zip to an IRIS folder.
 2. Run IRIS.exe. The first time Windows may ask to install the Microsoft .NET, accept.
 3. Set Star Citizen Window Mode to Borderless (Sorry other modes do not work).
-4. In game, use Shift+F12 (default) to toggle On/Off IRIS and Shift+0 (zero, default) to toggle the Interactive Overlay.
+4. In game, use Shift+F3 (default) to toggle On/Off IRIS and F3 (default) to toggle the Interactive Overlay.
 5. To change settings, right-click the IRIS tray icon and choose Settings: Change Capture, Tracking, Overlay settings, Import/Export list configs, edit hotkeys.
 
 ## Requirements
 
 - Windows 10 version 2004 or later. Windows 11 to hide WGC yellow video capture border
-- Microsoft .NET 8
+- Microsoft .NET 10
 - Star Citizen in Borderless mode.
 
 ## How it works
@@ -28,9 +28,9 @@ IRIS only reads the picture of the Star Citizen window, like recording software.
 
 Settings > Capture > Capture Method:
 - DD (Desktop Duplication), the default: has better frame rates and tracking. IRIS's overlay cannot be seen in streams, recordings and screenshots.
-- WGC (Windows Graphics Capture): allows "Show overlay in screenshots and recordings", so the overlay can appear in streams and recordings. It caps around 50 fps and tracks slightly worse.
+- WGC (Windows Graphics Capture): allows "Show overlay in screenshots and recordings", so the overlay can appear in streams and recordings. It also uses some VRAM.
 
-For better tracking, turn off Hardware-Accelerated GPU Scheduling (Windows Settings > System > Display > Graphics, then restart the PC). Turning on Nvidia Low Latency Mode or AMD Anti-Lag also offers a benefit.
+For better tracking, turn on Nvidia Low Latency Mode or AMD Anti-Lag.
 
 Names read best with Chromatic Aberration turned off in Star Citizen's graphics settings. IRIS shows a note in the side panel when it finds it on.
 
@@ -47,9 +47,9 @@ Names read best with Chromatic Aberration turned off in Star Citizen's graphics 
 
 Change them in Settings > Hotkeys.
 
-- Shift+F12: Toggle IRIS On/Off.
-- Tab: Activate IRIS for 10 seconds (5-30) while the overlay is off
-- Shift+0 (zero): Toggle Interactive Overlay (click players to colour them, open a dossier, write notes); Esc or its X button also closes it.
+- Shift+F3: Toggle IRIS On/Off.
+- Activate IRIS for 10 seconds (5-30) while the overlay is off: no key by default; set one in Settings > Hotkeys.
+- F3: Toggle Interactive Overlay (click players to colour them, open a dossier, write notes); Esc or its X button also closes it.
 
 ## Mining
 
@@ -61,7 +61,7 @@ Change them in Settings > Hotkeys.
 ## Network
 
 - robertsspaceindustries.com: name lookups.
-- Your hosted config URL, only if you set one.
+- Your hosted config URL, only if you set one (a public website: IP addresses and local network names are refused).
 - Update check (can turn off): api.github.com.
 - Update download (if you accept): github.com, *.githubusercontent.com.
 

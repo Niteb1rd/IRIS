@@ -19,14 +19,15 @@ public sealed record AppSettings
     public DateTimeOffset? HostedConfigLastCheck { get; init; }
 
 
-    public const int PanelWidthPercentMin = 8;
-    public const int PanelWidthPercentMax = 25;
+    public const int PanelWidthPercentMin = 15;
+
+    public const int PanelWidthPercentMax = 22;
     public const int PanelTextSizeMin = 8;
     public const int PanelTextSizeMax = 25;
     public const int PanelRightGapPercentMin = 0;
     public const int PanelRightGapPercentMax = 15;
-    public const int PanelTopGapPercentMin = 0;
-    public const int PanelTopGapPercentMax = 15;
+    public const int PanelVerticalGapPercentMin = 0;
+    public const int PanelVerticalGapPercentMax = 15;
 
     public int PanelWidthPercent { get; init; }
 
@@ -34,16 +35,32 @@ public sealed record AppSettings
 
     public int PanelRightGapPercent { get; init; }
 
-    public int PanelTopGapPercent { get; init; }
+    public int PanelVerticalGapPercent { get; init; }
 
     public OrgDisplay PanelOrgDisplay { get; init; }
+
+    public DateFormat DateFormat { get; init; }
+
+    public AccentColor UiAccentColor { get; init; }
+
+    public const int SoundVolumePercentMin = 0;
+    public const int SoundVolumePercentMax = 100;
+    public const int SoundVolumePercentStep = 5;
+
+    public int SoundVolumePercent { get; init; }
+
+    public const int UiCurvePercentMin = 0;
+    public const int UiCurvePercentMax = 200;
+    public const int UiCurvePercentStep = 10;
+
+    public int UiCurvePercent { get; init; }
 
     public ImportMode ImportMode { get; init; }
 
     public bool PanelMainOrgOnly { get; init; }
 
-    public const int DossierWidthPercentMin = 25;
-    public const int DossierWidthPercentMax = 45;
+    public const int DossierWidthPercentMin = 40;
+    public const int DossierWidthPercentMax = 55;
 
     public int DossierWidthPercent { get; init; }
 
@@ -60,19 +77,7 @@ public sealed record AppSettings
     public int BoundaryRight { get; init; }
 
 
-    public const int NameplateTrackingFpsMin = 30;
-
-    public const int NameplateTrackingFpsHighest = 90;
-
-    public const int NameplateTrackingFpsMax = NameplateTrackingFpsHighest + NameplateTrackingFpsStep;
-
-    public const int NameplateTrackingFpsStep = 5;
-
-    public int NameplateTrackingFps { get; init; }
-
-    public bool IsTrackingMax => NameplateTrackingFps > NameplateTrackingFpsHighest;
-
-    public int TrackingCapFps => IsTrackingMax ? 0 : Math.Max(NameplateTrackingFpsMin, NameplateTrackingFps);
+    public CpuUsage CpuUsage { get; init; }
 
     public const int TrackingLossSecondsMin = 5;
     public const int TrackingLossSecondsMax = 30;
@@ -89,6 +94,8 @@ public sealed record AppSettings
     public bool CheckForUpdates { get; init; }
 
     public bool HideCaptureBorder { get; init; }
+
+    public bool CaptureCopyQueue { get; init; }
 
     public bool MiningDisabled { get; init; }
 
@@ -129,11 +136,40 @@ public enum DarkMode
     Off,
 }
 
+public enum AccentColor
+{
+    Blue,
+    Cyan,
+    Mint,
+    Green,
+    Amber,
+    Red,
+    Magenta,
+    Purple,
+    White,
+}
+
+public enum DateFormat
+{
+    StarCitizen,
+
+    RealLife,
+}
+
 public enum OrgDisplay
 {
     FullName,
 
     Sid,
+}
+
+public enum CpuUsage
+{
+    Normal,
+
+    High,
+
+    Ultra,
 }
 
 public enum CaptureMethod

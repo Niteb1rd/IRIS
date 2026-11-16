@@ -10,19 +10,23 @@ public readonly record struct NameplateRead(string Text, double Score)
 
 public readonly record struct ReadPiece(int Start, int End, string Text, double Score, double FreeScore);
 
-public sealed record PieceRead(IReadOnlyList<ReadPiece> Pieces, int CapHeight, IReadOnlyList<(int Start, int End)>? CharacterSpans = null, LineMask? Mask = null);
+public sealed record PieceRead(IReadOnlyList<ReadPiece> Pieces, int CapHeight, IReadOnlyList<(int Start, int End)>? CharacterSpans = null, LineMask? Mask = null, IReadOnlyList<double>? Margins = null);
 
 public sealed class NameplateReader
 {
     private const double SplitFailureScore = -50.0;
 
     private readonly LetterModel _model;
+    private readonly int _letterO;
+    private readonly int _digitZero;
 
     public NameplateReader(LetterModel model)
     {
         if (model.InputSize != NameplateFeatures.VectorLength)
             throw new ArgumentException($"The model expects {model.InputSize} inputs, the features have {NameplateFeatures.VectorLength}.", nameof(model));
         _model = model;
+        _letterO = model.Charset.IndexOf('O');
+        _digitZero = model.Charset.IndexOf('0');
     }
 
     public NameplateRead Read(Mat bgr, Rect box)
@@ -69,11 +73,13 @@ public sealed class NameplateReader
             throw new ArgumentException("The alphabet has to have one entry per character of the model.", nameof(allowed));
         var pieces = new List<ReadPiece>();
         var spans = new List<(int Start, int End)>();
-        ReadCore(m, allowed, true, minInk, pieces, out var cap, spans);
-        return new PieceRead(pieces, cap, spans, m);
+        var margins = new List<double>();
+        ReadCore(m, allowed, true, minInk, pieces, out var cap, spans, margins);
+        return new PieceRead(pieces, cap, spans, m, margins);
     }
 
-    private NameplateRead ReadCore(LineMask m, bool[]? allowed, bool limitWork, double minInk, List<ReadPiece>? pieces, out int capHeight, List<(int Start, int End)>? spans = null)
+    private NameplateRead ReadCore(LineMask m, bool[]? allowed, bool limitWork, double minInk, List<ReadPiece>? pieces, out int capHeight, List<(int Start, int End)>? spans = null,
+        List<double>? margins = null)
     {
         var band = NameplateFeatures.FindCapBand(m);
         var cap = band.Bottom - band.Top + 1;
@@ -108,6 +114,7 @@ public sealed class NameplateReader
                 text.Append(_model.Charset[best]);
                 total += lp[best];
                 spans?.Add((a, b));
+                margins?.Add(Margin(lp, allowed, best));
                 if (pieces is not null)
                 {
                     var free = allowed is null ? best : ArgMax(lp, null);
@@ -116,7 +123,7 @@ public sealed class NameplateReader
             }
             else
             {
-                var (piece, score) = Split(m, a, b, band, allowed, limitWork, vector, lp, network, scratch, spans);
+                var (piece, score) = Split(m, a, b, band, allowed, limitWork, vector, lp, network, scratch, spans, margins);
                 text.Append(piece);
                 total += score;
                 pieces?.Add(new ReadPiece(a, b, piece, score, score));
@@ -126,7 +133,8 @@ public sealed class NameplateReader
         return new NameplateRead(text.ToString(), total);
     }
 
-    private (string Text, double Score) Split(LineMask m, int x0, int x1, CapBand band, bool[]? allowed, bool limitWork, Span<double> vector, Span<double> lp, Span<double> network, GlyphScratch scratch, List<(int Start, int End)>? spansOut = null)
+    private (string Text, double Score) Split(LineMask m, int x0, int x1, CapBand band, bool[]? allowed, bool limitWork, Span<double> vector, Span<double> lp, Span<double> network, GlyphScratch scratch, List<(int Start, int End)>? spansOut = null,
+        List<double>? marginsOut = null)
     {
         var cap = band.Bottom - band.Top + 1;
         var width = x1 - x0;
@@ -168,6 +176,7 @@ public sealed class NameplateReader
         var spanTo = new List<int>();
         var spanChar = new List<int>();
         var spanLogP = new List<double>();
+        var spanMargin = marginsOut is null ? null : new List<double>();
         for (var i = 0; i < cand.Count; i++)
         {
             for (var j = i + 1; j < cand.Count; j++)
@@ -185,6 +194,7 @@ public sealed class NameplateReader
                 spanTo.Add(j);
                 spanChar.Add(best);
                 spanLogP.Add(lp[best]);
+                spanMargin?.Add(Margin(lp, allowed, best));
             }
         }
 
@@ -194,6 +204,7 @@ public sealed class NameplateReader
         var score = new double[cand.Count];
         var backFrom = new int[cand.Count];
         var backChar = new int[cand.Count];
+        var backSpan = new int[cand.Count];
         Array.Fill(score, -1e9);
         Array.Fill(backFrom, -1);
         score[0] = 0.0;
@@ -207,6 +218,7 @@ public sealed class NameplateReader
                 score[to] = s;
                 backFrom[to] = from;
                 backChar[to] = spanChar[k];
+                backSpan[to] = k;
             }
         }
 
@@ -216,17 +228,22 @@ public sealed class NameplateReader
 
         var letters = new List<char>();
         var letterSpans = new List<(int, int)>();
+        var letterMargins = new List<double>();
         var at = end;
         while (at != 0 && backFrom[at] >= 0)
         {
             letters.Add(_model.Charset[backChar[at]]);
             letterSpans.Add((x0 + cand[backFrom[at]], x0 + cand[at]));
+            if (spanMargin is not null)
+                letterMargins.Add(spanMargin[backSpan[at]]);
             at = backFrom[at];
         }
 
         letters.Reverse();
         letterSpans.Reverse();
+        letterMargins.Reverse();
         spansOut?.AddRange(letterSpans);
+        marginsOut?.AddRange(letterMargins);
         return (new string(letters.ToArray()), score[end]);
     }
 
@@ -242,6 +259,23 @@ public sealed class NameplateReader
         var lp = _model.PredictLogProbs(vector);
         var best = ArgMax(lp, null);
         return best == bracket && lp[best] >= minScore;
+    }
+
+    private double Margin(ReadOnlySpan<double> values, bool[]? allowed, int best) => LetterMargin(values, allowed, best, _letterO, _digitZero);
+
+    public static double LetterMargin(ReadOnlySpan<double> values, bool[]? allowed, int best, int letterO, int digitZero)
+    {
+        var folded = best == letterO || best == digitZero;
+        var second = double.NegativeInfinity;
+        for (var i = 0; i < values.Length; i++)
+        {
+            if (i == best || (allowed is not null && !allowed[i]) || (folded && (i == letterO || i == digitZero)))
+                continue;
+            if (values[i] > second)
+                second = values[i];
+        }
+
+        return values[best] - second;
     }
 
     private static int ArgMax(ReadOnlySpan<double> values, bool[]? allowed)

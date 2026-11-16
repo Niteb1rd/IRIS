@@ -119,7 +119,8 @@ public sealed class ImportCoordinator
             }
 
             var hasExisting = File.Exists(_services.Paths.SocialListFile);
-            var mode = ImportChoiceDialog.Ask(owner, read.Config, hasExisting, headline, _services.Settings.ImportMode, userJustActed);
+            var changes = hasExisting ? ChangesText(read.Config, _services.Settings.ImportMode) : null;
+            var mode = ImportChoiceDialog.Ask(owner, read.Config, hasExisting, headline, _services.Settings.ImportMode, changes, userJustActed);
             if (mode is null || IsQuitting)
                 return new ImportAttempt(ImportOutcome.Cancelled, "Import cancelled.");
 
@@ -138,6 +139,15 @@ public sealed class ImportCoordinator
             host?.EndBusy();
             _active = false;
         }
+    }
+
+    private string? ChangesText(SocialConfig imported, ImportMode mode)
+    {
+        var current = SocialListStore.Load(_services.Paths.SocialListFile);
+        if (current.IsNew || !current.IsValid)
+            return null;
+        var after = ConfigImporter.Preview(current.Config, imported, mode);
+        return "Your list: " + SocialConfigDiff.Compare(current.Config, after).Describe();
     }
 
     private static string BulletList(IReadOnlyList<string> lines)

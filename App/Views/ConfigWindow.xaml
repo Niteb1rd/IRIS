@@ -29,6 +29,33 @@
             </StackPanel>
         </DataTemplate>
 
+        <Style x:Key="AccentSwatch" TargetType="RadioButton">
+            <Setter Property="Width" Value="26" />
+            <Setter Property="Height" Value="26" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="GroupName" Value="UiAccent" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Ring" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource Iris.SwatchBorder}" Padding="2" Background="Transparent">
+                            <Border CornerRadius="2" Background="{TemplateBinding Background}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Ring" Property="BorderThickness" Value="2" />
+                                <Setter TargetName="Ring" Property="Padding" Value="1" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Ring" Property="BorderThickness" Value="3" />
+                                <Setter TargetName="Ring" Property="Padding" Value="1" />
+                                <Setter TargetName="Ring" Property="BorderBrush" Value="{DynamicResource Iris.Text}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <DataTemplate x:Key="StatusCellTemplate">
             <StackPanel Margin="0,4,0,0">
                 <DockPanel LastChildFill="True">
@@ -415,7 +442,7 @@
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Toggle IRIS On/Off" VerticalAlignment="Center" />
                             <local:HotkeyBox x:Name="OverlayHotkeyBox" Grid.Row="0" Grid.Column="1" Margin="0,2" Padding="4,2"
                                              HotkeyChanged="OnHotkeyBoxChanged" />
-                            <Button x:Name="ClearOverlayHotkeyButton" Grid.Row="0" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
+                            <Button Grid.Row="0" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
                                     Click="OnClearOverlayHotkey" />
                             <TextBlock x:Name="OverlayHotkeyError" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Foreground="{DynamicResource Iris.Error}"
                                        TextWrapping="Wrap" Visibility="Collapsed" />
@@ -434,7 +461,7 @@
                                 <local:HotkeyBox x:Name="TimedHotkeyBox" Grid.Column="2" Margin="0,2" Padding="4,2"
                                                  HotkeyChanged="OnHotkeyBoxChanged" />
                             </Grid>
-                            <Button x:Name="ClearTimedHotkeyButton" Grid.Row="2" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
+                            <Button Grid.Row="2" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
                                     Click="OnClearTimedHotkey" />
                             <TextBlock x:Name="TimedHotkeyError" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Foreground="{DynamicResource Iris.Error}"
                                        TextWrapping="Wrap" Visibility="Collapsed" />
@@ -442,7 +469,7 @@
                             <TextBlock Grid.Row="4" Grid.Column="0" Text="Toggle Interactive Overlay" VerticalAlignment="Center" />
                             <local:HotkeyBox x:Name="InteractiveHotkeyBox" Grid.Row="4" Grid.Column="1" Margin="0,2" Padding="4,2"
                                              HotkeyChanged="OnHotkeyBoxChanged" />
-                            <Button x:Name="ClearInteractiveHotkeyButton" Grid.Row="4" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
+                            <Button Grid.Row="4" Grid.Column="2" Content="Clear" Padding="10,2" Margin="8,2,0,2"
                                     Click="OnClearInteractiveHotkey" />
                             <TextBlock x:Name="InteractiveHotkeyError" Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" Foreground="{DynamicResource Iris.Error}"
                                        TextWrapping="Wrap" Visibility="Collapsed" />
@@ -451,7 +478,7 @@
                         <TextBlock Text="Logging" FontWeight="SemiBold" Margin="0,0,0,4" />
                         <CheckBox x:Name="LogEnabledCheck" Content="Write a log file (Logs folder)" Margin="0,0,0,6"
                                   Checked="OnSettingChanged" Unchecked="OnSettingChanged" />
-                        <Button x:Name="OpenLogFolderButton" Content="Open log folder" HorizontalAlignment="Left"
+                        <Button Content="Open log folder" HorizontalAlignment="Left"
                                 Padding="12,4" Margin="0,0,0,16" Click="OnOpenLogFolder" />
 
                         <TextBlock Text="Shared Config" FontWeight="SemiBold" Margin="0,0,0,4" />
@@ -487,7 +514,7 @@
 
                         <TextBlock Text="Capture" FontWeight="SemiBold" Margin="0,16,0,4" />
                         <TextBlock Margin="0,0,0,6" TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}"
-                                   Text="DD captures with better fps and tracking. WGC allows showing the overlay in streams and recordings, but caps around 50 fps." />
+                                   Text="DD tracks with better fps. WGC allows showing the overlay in streams and recordings, and uses some VRAM." />
                         <Grid Margin="0,0,0,6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="250" />
@@ -503,6 +530,19 @@
                                   Checked="OnSettingChanged" Unchecked="OnSettingChanged" Click="OnVisibleInCaptureClick" ToolTipService.ShowOnDisabled="True" />
                         <CheckBox x:Name="HideCaptureBorderCheck" Content="Hide yellow capture border (Windows asks once)" Margin="0,0,0,8"
                                   Checked="OnSettingChanged" Unchecked="OnSettingChanged" ToolTipService.ShowOnDisabled="True" />
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="250" />
+                                <ColumnDefinition Width="258" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="CPU Usage" VerticalAlignment="Center" />
+                            <ComboBox x:Name="CpuUsageCombo" Grid.Column="1" Margin="0,3" SelectionChanged="OnSettingChanged"
+                                      ToolTip="Higher settings find and confirm names sooner but use more CPU. Tracking always runs at the game's frame rate.">
+                                <ComboBoxItem Content="Normal" />
+                                <ComboBoxItem Content="High" />
+                                <ComboBoxItem Content="Ultra" />
+                            </ComboBox>
+                        </Grid>
 
                         <TextBlock Text="Tracking Boundary" FontWeight="SemiBold" Margin="0,16,0,4" />
                         <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Iris.Hint}" Margin="0,0,0,6"
@@ -516,7 +556,6 @@
                                 <ColumnDefinition Width="82" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
@@ -552,14 +591,8 @@
                             <TextBlock Grid.Row="3" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center"
                                        Text="{Binding Value, ElementName=BoundaryRightSlider, StringFormat='{}{0:0}%'}" />
 
-                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Tracking Tickrate" VerticalAlignment="Center" />
-                            <Slider x:Name="TrackingFpsSlider" Grid.Row="4" Grid.Column="1" Margin="0,3" VerticalAlignment="Center"
-                                    TickFrequency="5" IsSnapToTickEnabled="True" SmallChange="5" LargeChange="15"
-                                    ValueChanged="OnTrackingFpsSliderChanged" />
-                            <TextBlock x:Name="TrackingFpsLabel" Grid.Row="4" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center" />
-
-                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Keep Lost Players in Panel" VerticalAlignment="Center" />
-                            <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Margin="0,3">
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Keep Lost Players in Panel" VerticalAlignment="Center" />
+                            <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Margin="0,3">
                                 <ComboBox x:Name="TrackingLossCombo" Width="55" VerticalAlignment="Center" SelectionChanged="OnSettingChanged"
                                           ToolTip="How long a player stays in the right panel after IRIS last saw the nameplate." />
                                 <TextBlock Text="Seconds" VerticalAlignment="Center" Margin="6,0,0,0" />
@@ -588,6 +621,27 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="250" />
                                 <ColumnDefinition Width="258" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Date Format" VerticalAlignment="Center" />
+                            <ComboBox x:Name="DateFormatCombo" Grid.Column="1" Margin="0,3" SelectionChanged="OnSettingChanged"
+                                      ToolTip="How the Interactive Overlay shows dates. Star Citizen adds 930 years (2026 is 2956). Saved dates stay real.">
+                                <ComboBoxItem Content="Star Citizen" />
+                                <ComboBoxItem Content="Real Life" />
+                            </ComboBox>
+                        </Grid>
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="250" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Accent Color" VerticalAlignment="Center"
+                                       ToolTip="The colour of the panels' edge lines and highlights. Only the look: brackets keep their own colours." />
+                            <WrapPanel x:Name="AccentSwatches" Grid.Column="1" Margin="0,3" />
+                        </Grid>
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="250" />
+                                <ColumnDefinition Width="258" />
                                 <ColumnDefinition Width="82" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
@@ -601,7 +655,8 @@
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Panel Width" VerticalAlignment="Center" />
                             <Slider x:Name="PanelWidthSlider" Grid.Row="0" Grid.Column="1" Margin="0,3" VerticalAlignment="Center"
                                     TickFrequency="1" IsSnapToTickEnabled="True" SmallChange="1" LargeChange="4"
-                                    ValueChanged="OnOverlaySliderChanged" />
+                                    ValueChanged="OnWidthSliderChanged"
+                                    ToolTip="Width of the right panel and of the Interactive Overlay's player list, in percent of the game window. Limited by the Dossier Width: both must fit side by side." />
                             <TextBlock Grid.Row="0" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center"
                                        Text="{Binding Value, ElementName=PanelWidthSlider, StringFormat='{}{0:0}%'}" />
 
@@ -615,24 +670,44 @@
                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Right Gap" VerticalAlignment="Center" />
                             <Slider x:Name="PanelRightGapSlider" Grid.Row="2" Grid.Column="1" Margin="0,3" VerticalAlignment="Center"
                                     TickFrequency="1" IsSnapToTickEnabled="True" SmallChange="1" LargeChange="4"
-                                    ValueChanged="OnOverlaySliderChanged" />
+                                    ValueChanged="OnOverlaySliderChanged"
+                                    ToolTip="Gap between the right panel and the game window's right edge during play. The Interactive Overlay places its player list beside the dossier instead." />
                             <TextBlock Grid.Row="2" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center"
                                        Text="{Binding Value, ElementName=PanelRightGapSlider, StringFormat='{}{0:0}%'}" />
 
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Top Gap" VerticalAlignment="Center" />
-                            <Slider x:Name="PanelTopGapSlider" Grid.Row="3" Grid.Column="1" Margin="0,3" VerticalAlignment="Center"
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Vertical Gap" VerticalAlignment="Center" />
+                            <Slider x:Name="PanelVerticalGapSlider" Grid.Row="3" Grid.Column="1" Margin="0,3" VerticalAlignment="Center"
                                     TickFrequency="1" IsSnapToTickEnabled="True" SmallChange="1" LargeChange="4"
-                                    ValueChanged="OnOverlaySliderChanged" />
+                                    ValueChanged="OnOverlaySliderChanged"
+                                    ToolTip="Gap above and below the right panel and the Interactive Overlay's panels, in percent of the game window's height." />
                             <TextBlock Grid.Row="3" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center"
-                                       Text="{Binding Value, ElementName=PanelTopGapSlider, StringFormat='{}{0:0}%'}" />
+                                       Text="{Binding Value, ElementName=PanelVerticalGapSlider, StringFormat='{}{0:0}%'}" />
 
                             <TextBlock Grid.Row="4" Grid.Column="0" Text="Dossier Width" VerticalAlignment="Center" />
                             <Slider x:Name="DossierWidthSlider" Grid.Row="4" Grid.Column="1" Margin="0,3" VerticalAlignment="Center"
                                     TickFrequency="1" IsSnapToTickEnabled="True" SmallChange="1" LargeChange="5"
-                                    ValueChanged="OnOverlaySliderChanged"
-                                    ToolTip="Width of the Interactive Overlay's dossier, in percent of the game window." />
+                                    ValueChanged="OnWidthSliderChanged"
+                                    ToolTip="Width of the Interactive Overlay's dossier, in percent of the game window. It is centred, with the player list beside it; limited by the Panel Width." />
                             <TextBlock Grid.Row="4" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center"
                                        Text="{Binding Value, ElementName=DossierWidthSlider, StringFormat='{}{0:0}%'}" />
+                        </Grid>
+
+                        <Grid Margin="0,6,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="250" />
+                                <ColumnDefinition Width="258" />
+                                <ColumnDefinition Width="82" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Sound Volume" VerticalAlignment="Center" />
+                            <Slider x:Name="SoundVolumeSlider" Grid.Column="1" Margin="0,3" VerticalAlignment="Center"
+                                    TickFrequency="5" IsSnapToTickEnabled="True" SmallChange="5" LargeChange="10"
+                                    ValueChanged="OnOverlaySliderChanged"
+                                    ToolTip="Volume of the Interactive Overlay's sounds (opening and closing it, opening a dossier). 0% is off." />
+                            <TextBlock Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center"
+                                       Text="{Binding Value, ElementName=SoundVolumeSlider, StringFormat='{}{0:0}%'}" />
+                            <Button Grid.Column="3" Content="Preview" Padding="12,2" VerticalAlignment="Center"
+                                    Click="OnPreviewSound" ToolTip="Plays the Interactive Overlay's opening sound at this volume." />
                         </Grid>
 
                         <TextBlock Text="Cache" FontWeight="SemiBold" Margin="0,16,0,4" />
@@ -661,7 +736,7 @@
                             <TextBlock Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center"
                                        Text="{Binding Value, ElementName=MiningZoomSlider, StringFormat='{}{0:0}%'}" />
                         </Grid>
-                        <Button x:Name="EditMiningButton" Content="Edit Mining Signals Data" HorizontalAlignment="Left"
+                        <Button Content="Edit Mining Signals Data" HorizontalAlignment="Left"
                                 Padding="12,4" Margin="0,0,0,8" Click="OnEditMiningData" />
                         <CheckBox x:Name="MiningDisabledCheck" Content="Disable Mining Feature" Margin="0,0,0,8"
                                   Checked="OnSettingChanged" Unchecked="OnSettingChanged" />
@@ -678,7 +753,7 @@
             </Grid.ColumnDefinitions>
             <Border x:Name="FocusSink" Grid.Column="0" Width="1" Height="1" HorizontalAlignment="Left"
                     Focusable="True" FocusVisualStyle="{x:Null}" KeyboardNavigation.IsTabStop="False" />
-            <TextBlock x:Name="FooterStatus" Grid.Column="0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            <local:CutTextBlock x:Name="FooterStatus" Grid.Column="0" VerticalAlignment="Center" />
             <Button x:Name="SaveButton" Grid.Column="1" Content="Save" Width="94" Padding="0,4" IsEnabled="False" Click="OnSave" />
             <Button Grid.Column="2" Content="Close" Width="94" Padding="0,4" Margin="8,0,0,0" IsCancel="True" Click="OnClose" />
         </Grid>

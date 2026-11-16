@@ -102,8 +102,10 @@ public sealed partial class LiveDetectionService
         {
             _running = false;
             _environment = null;
+            DropCopies();
             _frames.Clear();
             _source?.Dispose();
+            _pollWait.Dispose();
             _source = null;
         }
     }
@@ -149,7 +151,6 @@ public sealed partial class LiveDetectionService
         _blankNote.Reset();
         _blankLogged = false;
         _counters.Take();
-        _schedule.Reset();
         _intervals.Reset();
         _lastFrameMs = now;
         _lastCaptureProblem = null;
@@ -159,8 +160,8 @@ public sealed partial class LiveDetectionService
         _anyFrameThisRun = false;
         _running = true;
         var bounds = gate.Bounds;
-        var cap = TrackingCapFps();
-        TraceRunStart(bounds, cap);
+        _notedCpuUsage = _services.Settings.CpuUsage;
+        TraceRunStart(bounds);
         if (!AppVersion.Diagnostics)
         {
             Log("Live detection started");
@@ -168,14 +169,15 @@ public sealed partial class LiveDetectionService
         }
         Log(string.Format(
             CultureInfo.InvariantCulture,
-            "Live detection started (game window {0:0}x{1:0}; full scan {2:0.#} times a second, plate reads {3:0.#} times a second with at most {4} per tick, markers tracked on every new frame of the game{5}, brackets drawn at monitor refresh)",
-            bounds.Width, bounds.Height, _pipe.ScanHz, _pipe.PlateHz, _pipe.MaxReadsPerTick, cap > 0 ? $", at most {cap} times a second" : " with no cap (Max)"));
+            "Live detection started (game window {0:0}x{1:0}; CPU Usage {2}: {3}, at most {4} plate reads per tick, markers tracked on every new frame of the game, brackets drawn at monitor refresh)",
+            bounds.Width, bounds.Height, AppSettingsToml.CpuUsageText(_services.Settings.CpuUsage), PipelineRates.Of(Rated(_services.Settings.CpuUsage)).Describe(), _pipe.MaxReadsPerTick));
     }
 
     private void StopRun(double now)
     {
         _running = false;
         _source?.ReleaseHeldFrame();
+        DropCopies();
         if (_stats is { } stats)
         {
             Log(TakeSummary(stats, now));
@@ -201,14 +203,22 @@ public sealed partial class LiveDetectionService
         var height = (int)Math.Round(bounds.Height);
         if (!EnsureEnvironment(width, height))
         {
+            if (_source is { } waiting)
+                CollectReadbacks(waiting);
             UpdateLateNote(_clock.NowMs, false);
             return LiveSettings.TooSmallPauseMs;
         }
 
+        NoteCpuUsage();
         var source = EnsureSource();
         if (source is WgcFrameSource wgc)
+        {
             wgc.HideBorder = _services.Settings.HideCaptureBorder;
-        var arrival = source.AcquireNextFrame(gate.Handle);
+            wgc.UseCopyQueue = _services.Settings.CaptureCopyQueue;
+        }
+        CollectReadbacks(source);
+        var busy = CopiesOnTheirWay;
+        var arrival = source.AcquireNextFrame(gate.Handle, busy ? 0 : LiveSettings.CaptureAcquireTimeoutMs);
         var arrivedAt = _clock.NowMs;
         switch (arrival.Status)
         {
@@ -224,27 +234,22 @@ public sealed partial class LiveDetectionService
                 if (_lateFrames.OnFrame(frameMs, arrivedAt) is { } lateLine)
                     Log(lateLine);
                 UpdateLateNote(arrivedAt, LateFrameWindow.IsLate(arrivedAt - frameMs));
-                var taken = _schedule.Offer(frameMs, TrackingCapFps());
                 if (Trace("cap", "frame") is { } frameLine)
                 {
-                    frameLine.Num("fms", frameMs).Num("raw", arrival.FrameMs).Num("delay", arrivedAt - frameMs).Bool("taken", taken);
+                    frameLine.Num("fms", frameMs).Num("raw", arrival.FrameMs).Num("delay", arrivedAt - frameMs).Bool("taken", true);
                     if (source is DuplicationFrameSource duplication)
                         frameLine.Num("share", duplication.LastUpdatedShare, 3).Int("skipped", duplication.TakeSkippedUpdates());
                     Emit(frameLine);
                 }
-                if (!taken)
-                {
-                    source.ReleaseHeldFrame();
-                    return 0;
-                }
-
-                PublishFrame(frameMs, arrivedAt, width, height);
+                IssueFrame(frameMs, arrivedAt, width, height);
                 return 0;
             }
 
             case FrameWait.Unchanged:
                 UpdateLateNote(arrivedAt, false);
                 NoteNoFrameYet(arrivedAt);
+                if (busy)
+                    WaitForPictureOrCopies(source);
                 return 0;
 
             default:
@@ -270,6 +275,7 @@ public sealed partial class LiveDetectionService
         var wanted = method == CaptureMethod.WindowCapture;
         if (_source is not null && (_source is WgcFrameSource) == wanted)
             return _source;
+        DropCopies();
         _source?.Dispose();
         _source = wanted ? new WgcFrameSource { Log = Log } : new DuplicationFrameSource { Log = Log };
         _lastCaptureProblem = null;
@@ -312,6 +318,7 @@ public sealed partial class LiveDetectionService
         var updates = new List<IndexUpdate>(2);
         if (current is not null && !current.Geometry.Matches(width, height))
         {
+            DropCopies();
             updates.Add(new ResetUpdate(PipelineGroup.Capture, now, _index.Current.Epoch));
             if (_lateNote.Active)
                 updates.Add(new LateNoteUpdate(PipelineGroup.Capture, now, _index.Current.Epoch, true));
@@ -326,126 +333,46 @@ public sealed partial class LiveDetectionService
         return true;
     }
 
-    private void PublishFrame(double frameMs, double arrivedAt, int width, int height)
+    private TraceLine RatesLine(TraceLine line, CpuUsage usage)
     {
-        var source = _source!;
-        var snapshot = _index.Current;
-        var frame = _frames.Rent();
-        if (frame is null)
-        {
-            source.ReleaseHeldFrame();
-            if (Trace("cap", "pool_empty") is { } poolLine)
-                Emit(poolLine.Num("fms", frameMs));
-            return;
-        }
-
-        CapturedFrame? lateScan = null;
-        try
-        {
-            frame.Begin(frameMs, arrivedAt, width, height);
-            var chosen = CaptureRule.SelectUnseen(snapshot.Requests, frameMs, _newestSeenRequestId);
-            var requests = new List<(CaptureRequest Request, Rect Window)>(chosen.Count);
-            foreach (var request in chosen.OrderBy(r => r.Kind == RequestKind.ScanArea ? 0 : 1))
-            {
-                var rect = RegionPlanner.ToWindowRect(request.Region, width, height);
-                if (rect.Width > 0 && rect.Height > 0)
-                    requests.Add((request, rect));
-            }
-
-            var firstIsScan = requests.Count > 0 && requests[0].Request.Kind == RequestKind.ScanArea;
-            var windowRegions = new List<Rect>(requests.Count);
-            var buffers = new List<Mat>(requests.Count);
-            var patch = 0;
-            foreach (var (request, window) in requests)
-            {
-                windowRegions.Add(window);
-                buffers.Add(request.Kind == RequestKind.ScanArea ? frame.ScanBuffer : frame.PatchBuffer(patch++));
-            }
-
-            var grab = source.CopyHeldFrameInto(windowRegions, firstIsScan, buffers, deferScan: true);
-            if (grab.Status == GrabStatus.Unavailable)
-            {
-                _stats?.AddUnavailable();
-                if (grab.Message is { } message && message != _lastCaptureProblem)
-                {
-                    _lastCaptureProblem = message;
-                    Log("Live detection: " + source.Name + " unavailable (" + message + ")");
-                    _services.Milestones.CaptureFailed(message);
-                }
-
-                return;
-            }
-
-            _lastCaptureProblem = null;
-            for (var i = 0; i < requests.Count; i++)
-                frame.Add(requests[i].Request, requests[i].Window, buffers[i]);
-            var requestIds = frame.RequestIds.ToArray();
-            if (firstIsScan)
-            {
-                frame.MarkScanPending();
-                frame.TryRetain();
-                lateScan = frame;
-            }
-
-            var publishedAt = _clock.NowMs;
-            frame.MarkPublished(publishedAt);
-            var sequence = _frames.Publish(frame);
-            frame = null;
-            TracePublish(sequence, frameMs, arrivedAt, publishedAt, requests, firstIsScan, source.LastCopyTimes);
-            _newestSeenRequestId = Math.Max(_newestSeenRequestId, CaptureRule.NewestId(snapshot.Requests));
-            _intervals.Add(frameMs);
-            _queue.Submit(new IndexUpdate[] { new NewFrameUpdate(PipelineGroup.Capture, frameMs, snapshot.Epoch, arrivedAt, _intervals.MedianMs, requestIds) });
-            if (lateScan is not null)
-            {
-                var done = lateScan;
-                lateScan = null;
-                FinishScanRead(source, done);
-            }
-        }
-        finally
-        {
-            frame?.Release();
-            if (lateScan is not null)
-            {
-                lateScan.CompleteScan(false);
-                lateScan.Release();
-            }
-        }
+        var rates = PipelineRates.Of(Rated(usage));
+        return line.Str("cpuUsage", AppSettingsToml.CpuUsageText(usage))
+            .Num("scanHz", rates.ScanHz).Num("plateHz", rates.PlateHz).Num("confirmedReadHz", rates.ConfirmedReadHz).Num("disputedReadHz", rates.DisputedReadHz)
+            .Num("stoppedHz", rates.StoppedTrackHz).Int("lostSearchEveryFrames", rates.LostSearchEveryFrames).Num("confirmSpanMs", rates.ConfirmSpanMs);
     }
 
-    private void TraceRunStart(PixelRect bounds, int cap)
+    private void NoteCpuUsage()
+    {
+        var usage = _services.Settings.CpuUsage;
+        if (usage == _notedCpuUsage)
+            return;
+        _notedCpuUsage = usage;
+        if (!_running)
+            return;
+        if (Trace("cap", "rates") is { } line)
+            Emit(RatesLine(line, usage));
+        if (AppVersion.Diagnostics)
+            Log("Live detection: CPU Usage " + AppSettingsToml.CpuUsageText(usage) + ": " + PipelineRates.Of(Rated(usage)).Describe());
+    }
+
+    private void TraceRunStart(PixelRect bounds)
     {
         if (_trace is null)
             return;
         if (!_trace.IsOpen)
         {
-            var header = TraceLine.Begin(_clock.NowMs, "cap", "session")
+            var header = RatesLine(TraceLine.Begin(_clock.NowMs, "cap", "session"), _services.Settings.CpuUsage)
                 .Str("wall", DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz", CultureInfo.InvariantCulture))
                 .Str("version", AppVersion.Text)
                 .Box("window", bounds)
-                .Int("trackCapFps", cap)
                 .Str("capture", AppSettingsToml.CaptureMethodText(_services.Settings.CaptureMethod))
-                .Num("scanHz", _pipe.ScanHz).Num("plateHz", _pipe.PlateHz).Num("stoppedHz", _pipe.StoppedTrackHz)
                 .Num("lostAfterMs", _pipe.LostAfterMs).Num("maxLookAheadMs", _pipe.MaxLookAheadMs).Num("missCost", _pipe.MissCost)
                 .Text();
             _trace.Open(DateTime.Now, header);
         }
 
         if (Trace("cap", "run_start") is { } line)
-            Emit(line.Box("window", bounds).Int("trackCapFps", cap).Str("capture", AppSettingsToml.CaptureMethodText(_services.Settings.CaptureMethod)).Str("wall", DateTimeOffset.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture)));
-    }
-
-    private void TracePublish(long sequence, double frameMs, double arrivedAt, double publishedAt, List<(CaptureRequest Request, Rect Window)> requests, bool scanDeferred,
-        CopyTimes copy)
-    {
-        if (Trace("cap", "publish") is not { } line)
-            return;
-        line.Int("seq", sequence).Num("fms", frameMs).Num("arrive", arrivedAt).Num("copyMs", publishedAt - arrivedAt).Num("issueMs", copy.IssueMs).Num("readMs", copy.ReadMs)
-            .Bool("scanDeferred", scanDeferred).Array("regions");
-        foreach (var (request, window) in requests)
-            line.Item().Str("kind", request.Kind.ToString()).Str("by", request.Requester.ToString()).Int("mid", request.MarkerId).Int("tag", request.Tag)
-                .Box("win", new PixelRect(window.X, window.Y, window.Width, window.Height)).Num("madeFrom", request.MadeFromFrameMs).Num("exp", request.ExpiresAtMs);
-        Emit(line.EndArray());
+            Emit(RatesLine(line.Box("window", bounds), _services.Settings.CpuUsage).Str("capture", AppSettingsToml.CaptureMethodText(_services.Settings.CaptureMethod)).Str("wall", DateTimeOffset.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture)));
     }
 
     private void CheckBlankPicture(CapturedFrame frame)
@@ -481,35 +408,4 @@ public sealed partial class LiveDetectionService
         return max;
     }
 
-    private void FinishScanRead(IFrameSource source, CapturedFrame frame)
-    {
-        var ok = false;
-        var started = System.Diagnostics.Stopwatch.GetTimestamp();
-        try
-        {
-            ok = source.ReadPendingScan(out var problem);
-            if (!ok && problem is not null && problem != _lastCaptureProblem)
-            {
-                _lastCaptureProblem = problem;
-                Log("Live detection: " + source.Name + " unavailable (" + problem + ")");
-                _services.Milestones.CaptureFailed(problem);
-            }
-            if (ok)
-                CheckBlankPicture(frame);
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            Log("Live detection: the scan region could not be read (" + ex.GetType().Name + ": " + ex.Message + ")");
-        }
-        finally
-        {
-            if (Trace("cap", "scan_read") is { } readLine)
-                Emit(readLine.Num("fms", frame.FrameMs).Bool("ok", ok).Num("ms", (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency));
-            frame.CompleteScan(ok);
-            frame.Release();
-        }
-
-        if (ok)
-            _stats?.AddScanRead((System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
-    }
 }

@@ -1,7 +1,8 @@
 
 namespace Iris.Core.Detection;
 
-public sealed record NameRowRead(string Text, double Score, bool OneWord, bool ValidChars, LineMask? Mask, IReadOnlyList<O0Glyph> O0)
+public sealed record NameRowRead(string Text, double Score, bool OneWord, bool ValidChars, LineMask? Mask, IReadOnlyList<O0Glyph> O0, double MinMargin = double.NaN,
+    IReadOnlyList<double>? Margins = null)
 {
     public static NameRowRead Empty { get; } = new(string.Empty, 0.0, false, false, null, Array.Empty<O0Glyph>());
 

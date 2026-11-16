@@ -33,6 +33,7 @@ public sealed class TrayIcon : IDisposable
         quitItem.Click += (_, _) => QuitRequested?.Invoke(this, EventArgs.Empty);
 
         _menu = new Forms.ContextMenuStrip();
+        TrayMenuLook.Apply(_menu);
         _menu.Items.Add(settingsItem);
         _menu.Items.Add(_disableOverlayItem);
         _menu.Items.Add(new Forms.ToolStripSeparator());
@@ -93,7 +94,7 @@ public sealed class TrayIcon : IDisposable
     {
         if (_disposed)
             return;
-        var shown = text.Length <= MaxBalloonLength ? text : text.Substring(0, MaxBalloonLength - 1) + "…";
+        var shown = text.Length <= MaxBalloonLength ? text : text.Substring(0, MaxBalloonLength - 2) + "..";
         _icon.ShowBalloonTip(8000, "IRIS", shown, Forms.ToolTipIcon.Info);
     }
 

@@ -35,15 +35,17 @@ public sealed partial class AppServices
         return saved;
     }
 
-    public SaveResult UpdateSettings(Func<AppSettings, AppSettings> change)
+    public SaveResult UpdateSettings(Func<AppSettings, AppSettings> change, bool readDiskFirst = true)
     {
+        if (readDiskFirst)
+            ReadOutsideEdits();
         var changed = change(Settings);
         if (!SettingsFileHasErrors)
             return SaveSettings(changed);
 
         ApplySettings(changed);
         Log.Write(Clock.UtcNow,
-            "settings.txt has errors, so it was not overwritten; the hosted config address/version is kept in memory only until you save in the Settings tab.");
+            "settings.txt has errors, so it was not overwritten; the change is kept in memory only until you save in the Settings tab.");
         return SaveResult.Ok();
     }
 
@@ -85,10 +87,13 @@ public sealed partial class AppServices
     public SaveResult SetOverlayDisabled(bool disabled) =>
         Settings.OverlayDisabled == disabled ? SaveResult.Ok() : UpdateSettings(s => s with { OverlayDisabled = disabled });
 
+    private void ReadOutsideEdits() => ApplyPoll(PollConfigFiles());
+
     public Task<HostedConfigResult> FetchHostedConfigAsync(string url) => _hostedClient.FetchAsync(url, _shutdown.Token);
 
     public SaveResult SaveListChange(Func<SocialConfig, SocialConfig> change)
     {
+        ReadOutsideEdits();
         if (ListFileHasErrors)
             return SaveResult.Failed("The list file has errors; fix it in Settings first.");
         var config = change(CurrentConfig);
@@ -167,9 +172,11 @@ public sealed partial class AppServices
     public void Dispose()
     {
         _isShuttingDown = true;
+        FinishNotes();
         _shutdown.Cancel();
         _http.Dispose();
         _hostedHttp.Dispose();
+        Sounds.Dispose();
         Database.Dispose();
         _shutdown.Dispose();
     }

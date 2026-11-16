@@ -12,6 +12,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -37,20 +38,20 @@ public partial class ConfigWindow
         TimedHotkeyBox.HotkeyValue = settings.HotkeyTimedOverlay;
         InteractiveHotkeyBox.HotkeyValue = settings.HotkeyInteractiveOverlay;
         TimedSecondsCombo.SelectedIndex = TimedSecondsIndex(settings.TimedOverlaySeconds);
-        PanelWidthSlider.Value = settings.PanelWidthPercent;
+        LoadWidthSliders(settings.PanelWidthPercent, settings.DossierWidthPercent);
         PanelTextSizeSlider.Value = settings.PanelTextSize;
         PanelRightGapSlider.Value = settings.PanelRightGapPercent;
-        PanelTopGapSlider.Value = settings.PanelTopGapPercent;
-        DossierWidthSlider.Value = settings.DossierWidthPercent;
+        PanelVerticalGapSlider.Value = settings.PanelVerticalGapPercent;
         OrgDisplayCombo.SelectedIndex = settings.PanelOrgDisplay == OrgDisplay.Sid ? 1 : 0;
         MainOrgOnlyCheck.IsChecked = settings.PanelMainOrgOnly;
+        DateFormatCombo.SelectedIndex = settings.DateFormat == DateFormat.RealLife ? 1 : 0;
+        LoadAccentSwatches(settings.UiAccentColor);
         ImportModeCombo.SelectedIndex = Math.Max(0, IndexOfImportMode(settings.ImportMode));
         BoundaryTopSlider.Value = settings.BoundaryTop;
         BoundaryBottomSlider.Value = settings.BoundaryBottom;
         BoundaryLeftSlider.Value = settings.BoundaryLeft;
         BoundaryRightSlider.Value = settings.BoundaryRight;
-        TrackingFpsSlider.Value = settings.NameplateTrackingFps;
-        UpdateTrackingFpsLabel();
+        CpuUsageCombo.SelectedIndex = (int)settings.CpuUsage;
         TrackingLossCombo.SelectedIndex = TrackingLossIndex(settings.TrackingLossDisplaySeconds);
         CaptureMethodCombo.SelectedIndex = settings.CaptureMethod == CaptureMethod.WindowCapture ? 1 : 0;
         _visibleInCaptureStored = settings.OverlayVisibleInCapture;
@@ -59,6 +60,7 @@ public partial class ConfigWindow
         CheckForUpdatesCheck.IsChecked = settings.CheckForUpdates;
         MiningDisabledCheck.IsChecked = settings.MiningDisabled;
         MiningZoomSlider.Value = settings.MiningLabelZoomPercent;
+        SoundVolumeSlider.Value = settings.SoundVolumePercent;
         WindowScaleCombo.SelectedIndex = ScaleIndex(settings.SettingsWindowScale);
         _darkModeShownOn = AppTheme.Resolve(settings.SettingsDarkMode);
         DarkModeCombo.SelectedIndex = _darkModeShownOn ? 0 : 1;
@@ -84,10 +86,12 @@ public partial class ConfigWindow
         PanelWidthPercent = (int)Math.Round(PanelWidthSlider.Value),
         PanelTextSize = (int)Math.Round(PanelTextSizeSlider.Value),
         PanelRightGapPercent = (int)Math.Round(PanelRightGapSlider.Value),
-        PanelTopGapPercent = (int)Math.Round(PanelTopGapSlider.Value),
+        PanelVerticalGapPercent = (int)Math.Round(PanelVerticalGapSlider.Value),
         DossierWidthPercent = (int)Math.Round(DossierWidthSlider.Value),
         PanelOrgDisplay = OrgDisplayCombo.SelectedIndex == 1 ? OrgDisplay.Sid : OrgDisplay.FullName,
         PanelMainOrgOnly = MainOrgOnlyCheck.IsChecked == true,
+        DateFormat = DateFormatCombo.SelectedIndex == 1 ? DateFormat.RealLife : DateFormat.StarCitizen,
+        UiAccentColor = SelectedAccent(),
         ImportMode = ImportModeCombo.SelectedIndex >= 0 && ImportModeCombo.SelectedIndex < AppSettingsToml.ImportModes.Count
             ? AppSettingsToml.ImportModes[ImportModeCombo.SelectedIndex]
             : _services.Settings.ImportMode,
@@ -95,7 +99,7 @@ public partial class ConfigWindow
         BoundaryBottom = (int)Math.Round(BoundaryBottomSlider.Value),
         BoundaryLeft = (int)Math.Round(BoundaryLeftSlider.Value),
         BoundaryRight = (int)Math.Round(BoundaryRightSlider.Value),
-        NameplateTrackingFps = (int)Math.Round(TrackingFpsSlider.Value),
+        CpuUsage = SelectedCpuUsage(),
         TrackingLossDisplaySeconds = TrackingLossCombo.SelectedIndex >= 0
             ? AppSettings.TrackingLossSecondsMin + TrackingLossCombo.SelectedIndex * AppSettings.TrackingLossSecondsStep
             : _services.Settings.TrackingLossDisplaySeconds,
@@ -105,6 +109,7 @@ public partial class ConfigWindow
         CheckForUpdates = CheckForUpdatesCheck.IsChecked == true,
         MiningDisabled = MiningDisabledCheck.IsChecked == true,
         MiningLabelZoomPercent = (int)Math.Round(MiningZoomSlider.Value),
+        SoundVolumePercent = (int)Math.Round(SoundVolumeSlider.Value),
         SettingsWindowScale = WindowScaleCombo.SelectedIndex >= 0
             ? AppSettings.SettingsWindowScales[WindowScaleCombo.SelectedIndex]
             : _services.Settings.SettingsWindowScale,
@@ -294,23 +299,73 @@ public partial class ConfigWindow
 
     private void OnOverlaySliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => OverlayValuesChanged();
 
-    private void OnPanelOrgOptionChanged(object sender, RoutedEventArgs e) => OverlayValuesChanged();
+    private void OnPreviewSound(object sender, RoutedEventArgs e) =>
+        _services.Sounds.Play(UiSound.InteractiveOverlayOpen, (int)Math.Round(SoundVolumeSlider.Value));
 
-    private void OnTrackingFpsSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    private void LoadAccentSwatches(AccentColor accent)
     {
-        UpdateTrackingFpsLabel();
+        if (AccentSwatches.Children.Count == 0)
+        {
+            foreach (var color in Enum.GetValues<AccentColor>())
+            {
+                var swatch = new RadioButton
+                {
+                    Style = (Style)FindResource("AccentSwatch"),
+                    Background = new SolidColorBrush(PanelFrame.AccentColour(color)),
+                    Tag = color,
+                    ToolTip = color.ToString(),
+                };
+                AutomationProperties.SetName(swatch, color.ToString());
+                swatch.Checked += (_, _) => OverlayValuesChanged();
+                AccentSwatches.Children.Add(swatch);
+            }
+        }
+
+        foreach (var swatch in AccentSwatches.Children.OfType<RadioButton>())
+            swatch.IsChecked = swatch.Tag is AccentColor color && color == accent;
+    }
+
+    private AccentColor SelectedAccent() =>
+        AccentSwatches.Children.OfType<RadioButton>().FirstOrDefault(s => s.IsChecked == true)?.Tag is AccentColor color ? color : AccentColor.Blue;
+
+    private void LoadWidthSliders(int panelPercent, int dossierPercent)
+    {
+        _loadingWidths = true;
+        try
+        {
+            ConfigureSlider(PanelWidthSlider, AppSettings.PanelWidthPercentMin, AppSettings.PanelWidthPercentMax);
+            ConfigureSlider(DossierWidthSlider, AppSettings.DossierWidthPercentMin, AppSettings.DossierWidthPercentMax);
+            PanelWidthSlider.Value = panelPercent;
+            DossierWidthSlider.Value = dossierPercent;
+        }
+        finally
+        {
+            _loadingWidths = false;
+        }
+
+        LimitWidthSliders();
+    }
+
+    private void LimitWidthSliders()
+    {
+        if (_loadingWidths || PanelWidthSlider is null || DossierWidthSlider is null)
+            return;
+        PanelWidthSlider.Maximum = DossierText.MaxPanelPercent((int)Math.Round(DossierWidthSlider.Value));
+        DossierWidthSlider.Maximum = DossierText.MaxDossierPercent((int)Math.Round(PanelWidthSlider.Value));
+    }
+
+    private void OnWidthSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        LimitWidthSliders();
         OverlayValuesChanged();
     }
 
-    private void UpdateTrackingFpsLabel()
-    {
-        if (TrackingFpsLabel is null || TrackingFpsSlider is null)
-            return;
-        var value = (int)Math.Round(TrackingFpsSlider.Value);
-        TrackingFpsLabel.Text = value > AppSettings.NameplateTrackingFpsHighest
-            ? "Max"
-            : value.ToString(CultureInfo.InvariantCulture) + " fps";
-    }
+    private void OnPanelOrgOptionChanged(object sender, RoutedEventArgs e) => OverlayValuesChanged();
+
+    private CpuUsage SelectedCpuUsage() =>
+        CpuUsageCombo is null || CpuUsageCombo.SelectedIndex < 0
+            ? _services.Settings.CpuUsage
+            : (CpuUsage)Math.Clamp(CpuUsageCombo.SelectedIndex, (int)CpuUsage.Normal, (int)CpuUsage.Ultra);
 
     private void OverlayValuesChanged()
     {
@@ -411,7 +466,7 @@ public partial class ConfigWindow
         {
             var folder = _services.Paths.LogsFolder;
             Directory.CreateDirectory(folder);
-            Process.Start(new ProcessStartInfo("explorer.exe", "\"" + folder + "\"") { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(WindowsTools.Explorer) { UseShellExecute = false, ArgumentList = { folder } });
         }
         catch (Exception ex)
         {

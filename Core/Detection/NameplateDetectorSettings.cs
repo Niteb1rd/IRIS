@@ -168,6 +168,14 @@ public sealed record NameplateDetectorSettings
 
     public double JoinWidthPx { get; init; } = 7.0;
 
+    public bool BandJoin { get; init; } = BandJoinEnabled;
+
+    public const bool BandJoinEnabled = true;
+
+    public double BandJoinTopPx { get; init; } = 3.0;
+
+    public double BandJoinBottomPx { get; init; } = 3.0;
+
     public double FillMin { get; init; } = 0.12;
 
     public double FillMax { get; init; } = 0.75;
@@ -218,8 +226,6 @@ public sealed record NameplateDetectorSettings
 
     public const int PlateColorMinPixels = 30;
 
-    public const int PlateMaskMinPixels = 8;
-
     public int Scale(int frameHeight, double value) =>
         Math.Max(1, (int)Math.Floor(value * frameHeight / ReferenceHeight + 0.5));
 
@@ -237,6 +243,8 @@ public sealed record NameplateDetectorSettings
             return "The name length limits are not usable.";
         if (ClearLines < 0 || SpeckArea < 0 || CenterTolerance < 0 || LeftTolerance < 0 || LeftWidthDifference < 0 || DistanceMinInk < 0)
             return "The isolation and pairing numbers must not be negative.";
+        if (BandJoinTopPx < 0 || BandJoinBottomPx < 0)
+            return "The band join limits must not be negative.";
         if (SpeedJoinGap < 0 || SpeedJoinMaxLines < 0)
             return "The speed group join limits must not be negative.";
         if (MaxRows < 1 || RowGapMax < 0 || RowPitchMin < 0 || RowPitchMax < RowPitchMin || RowMinCaps < 0 || !(StackTintTolerance >= 0))

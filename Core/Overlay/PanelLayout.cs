@@ -15,22 +15,31 @@ public sealed record PanelLayoutResult(
     double PaddingX,
     double PaddingY,
     double CornerRadius,
-    IReadOnlyList<PanelMessage> Messages)
+    IReadOnlyList<PanelMessage> Messages,
+    PixelRect Frame,
+    double FramePad,
+    double EdgeWidth)
 {
-    public static readonly PanelLayoutResult Empty = new(Array.Empty<PanelSlot>(), null, default, 0, 0, 0, 0, 0, Array.Empty<PanelMessage>());
+    public static readonly PanelLayoutResult Empty = new(Array.Empty<PanelSlot>(), null, default, 0, 0, 0, 0, 0, Array.Empty<PanelMessage>(), default, 0, 0);
+
+    public (double Left, double Width) TextSpan(PixelRect box) => (box.X + EdgeWidth + PaddingX, Math.Max(1.0, box.Width - EdgeWidth - 2 * PaddingX));
 
     public bool IsEmpty => Slots.Count == 0 && MoreText is null && Messages.Count == 0;
 }
 
 public static class PanelLayout
 {
-    public const double BottomReservePercent = 10;
-
     public const double ReferenceHeight = 1440;
 
     public static double ScaledTextSize(int textSizeAt1440, double windowHeight) => textSizeAt1440 * windowHeight / ReferenceHeight;
 
     public const double NoteCharWidth = 0.62;
+
+    public static double FrameLeft(AppSettings settings, double windowWidth)
+    {
+        var right = windowWidth - windowWidth * settings.PanelRightGapPercent / 100.0;
+        return Math.Max(0, right - windowWidth * settings.PanelWidthPercent / 100.0);
+    }
 
     public static PanelLayoutResult Compute(IReadOnlyList<PanelEntry> entries, double windowWidth, double windowHeight, AppSettings settings, string? note = null, string? toast = null)
     {
@@ -44,13 +53,17 @@ public static class PanelLayout
         var paddingX = PaddingXFor(fontSize);
         var paddingY = PaddingYFor(fontSize);
         var corner = CornerFor(fontSize);
-        var gap = fontSize * 0.4;
+        var gap = GapFor(fontSize);
 
-        var panelWidth = windowWidth * settings.PanelWidthPercent / 100.0;
-        var right = windowWidth - windowWidth * settings.PanelRightGapPercent / 100.0;
-        var left = Math.Max(0, right - panelWidth);
-        var top = windowHeight * settings.PanelTopGapPercent / 100.0;
-        var limit = windowHeight - windowHeight * BottomReservePercent / 100.0;
+        var frameWidth = windowWidth * settings.PanelWidthPercent / 100.0;
+        var frameLeft = FrameLeft(settings, windowWidth);
+        var (frameTop, frameBottom) = DossierText.VerticalSpan(settings, windowHeight);
+
+        var pad = PanelLook.FramePadPx * PanelLook.Scale(windowHeight);
+        var left = frameLeft + pad;
+        var panelWidth = Math.Max(1.0, frameWidth - 2 * pad);
+        var top = frameTop + pad;
+        var limit = Math.Max(top, frameBottom - pad);
 
         var messages = new List<PanelMessage>(2);
         var messageTop = top;
@@ -74,7 +87,7 @@ public static class PanelLayout
 
         var entriesTop = messageTop;
 
-        var perLine = CharsPerLine(panelWidth - 2 * paddingX, fontSize);
+        var perLine = CharsPerLine(panelWidth - corner - 2 * paddingX, fontSize);
         var orgLines = new IReadOnlyList<string>[entries.Count];
         var tops = new double[entries.Count + 1];
         tops[0] = entriesTop;
@@ -116,7 +129,16 @@ public static class PanelLayout
             moreRect = new PixelRect(left, moreTop, panelWidth, lineHeight);
         }
 
-        return new PanelLayoutResult(slots, moreText, moreRect, fontSize, lineHeight, paddingX, paddingY, corner, messages);
+        var contentBottom = top;
+        foreach (var message in messages)
+            contentBottom = Math.Max(contentBottom, message.Rect.Bottom);
+        foreach (var slot in slots)
+            contentBottom = Math.Max(contentBottom, slot.Rect.Bottom);
+        if (moreText is not null)
+            contentBottom = Math.Max(contentBottom, moreRect.Bottom);
+        var frame = new PixelRect(frameLeft, frameTop, frameWidth, contentBottom + pad - frameTop);
+
+        return new PanelLayoutResult(slots, moreText, moreRect, fontSize, lineHeight, paddingX, paddingY, corner, messages, frame, pad, corner);
     }
 
     public static int CharsPerLine(double width, double fontSize) => Math.Max(8, (int)Math.Floor(width / (fontSize * NoteCharWidth)));
@@ -152,5 +174,7 @@ public static class PanelLayout
 
     private static double PaddingYFor(double fontSize) => fontSize * 0.45;
 
-    private static double CornerFor(double fontSize) => fontSize * 0.5;
+    private static double CornerFor(double fontSize) => fontSize * 2.0 / 3.0;
+
+    private static double GapFor(double fontSize) => fontSize * 0.8;
 }

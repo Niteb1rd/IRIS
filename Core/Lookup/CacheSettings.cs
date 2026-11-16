@@ -20,11 +20,17 @@ public sealed class CacheSettings
 
     public const int RsiMaxRedirects = 3;
 
+    public const int RsiMaxBodyBytes = 4 * 1024 * 1024;
+
     public static readonly TimeSpan RsiDefaultInterval = TimeSpan.FromSeconds(1);
 
     public static readonly TimeSpan RsiMaxBackoff = TimeSpan.FromSeconds(30);
 
     public static readonly TimeSpan RsiMaxRetryAfter = TimeSpan.FromSeconds(120);
+
+    public const int RsiBurstSize = 20;
+
+    public static readonly TimeSpan RsiBurstGap = TimeSpan.FromMilliseconds(250);
 
     public const int RsiBreakerThreshold = 5;
 
@@ -77,6 +83,8 @@ public sealed class CacheSettings
     public const int UpdateDownloadMaxRedirects = 3;
 
     public static readonly TimeSpan UpdateDownloadTimeout = TimeSpan.FromMinutes(5);
+
+    public static readonly TimeSpan UpdateDownloadStallTimeout = TimeSpan.FromSeconds(60);
 
     public const long UpdateDownloadMaxBytes = 200L * 1024 * 1024;
 

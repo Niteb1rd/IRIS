@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Threading;
 using System.Windows.Threading;
 using Iris.Core;
+using Iris.Core.Config;
 using Iris.Core.Lookup;
 using Iris.Core.Detection;
 using Iris.Core.Mining;
@@ -25,6 +26,7 @@ public sealed partial class LiveDetectionService : IDisposable
     private readonly SessionExclusions _sessionExclusions = new();
     private readonly SessionNames _sessionNames = new();
     private readonly PipelineSettings _pipe = PipelineSettings.Default;
+    private readonly IReadOnlyDictionary<CpuUsage, PipelineSettings> _rated;
     private readonly MiningSettings _mining = MiningSettings.Default;
     private readonly MiningTableSource _miningTables;
     private readonly PipelineStats? _stats = AppVersion.Diagnostics ? new(0) : null;
@@ -34,7 +36,6 @@ public sealed partial class LiveDetectionService : IDisposable
     private readonly IndexUpdateQueue _queue;
     private readonly FrameHub _frames = new(LiveSettings.FramePoolSize);
     private readonly FrameIntervals _intervals = new();
-    private readonly TrackingSchedule _schedule = new();
     private readonly ThreadCpuMeter?[] _cpu = new ThreadCpuMeter?[PipelineStats.GroupCount];
     private readonly ManualResetEventSlim _wake = new(false);
     private readonly CancellationTokenSource _stop = new();
@@ -62,10 +63,15 @@ public sealed partial class LiveDetectionService : IDisposable
     private bool _blankLogged;
     private double _lastFrameMs;
     private long _newestSeenRequestId;
+    private readonly Queue<FrameInFlight> _framesInFlight = new();
+    private readonly List<ScanInFlight> _scansInFlight = new();
+    private readonly PreciseWait _pollWait = new();
+    private WaitHandle[] _bothHandles = new WaitHandle[2];
     private string? _lastCaptureProblem;
     private bool _tooSmallLogged;
     private double _runStartMs;
     private bool _anyFrameThisRun;
+    private CpuUsage _notedCpuUsage;
     private int _readerFailures;
     private double _readerRetryAtMs;
     private string? _lastReaderProblem;
@@ -86,6 +92,7 @@ public sealed partial class LiveDetectionService : IDisposable
         _dispatcher = Dispatcher.CurrentDispatcher;
         _gate = overlay.Gate;
         _trace = AppVersion.Diagnostics ? new TraceFile(services.Paths.LogsFolder, Log) : null;
+        _rated = Enum.GetValues<CpuUsage>().ToDictionary(usage => usage, usage => PipelineRates.For(usage).Apply(_pipe));
         _index = new MarkerIndex(_pipe, _counters) { Trace = _trace };
         _queue = new IndexUpdateQueue(_index, _clock);
         _miningTables = new MiningTableSource(services.Paths.MiningFile, Log);
@@ -116,6 +123,8 @@ public sealed partial class LiveDetectionService : IDisposable
         _captureThread.Start();
     }
 
+    public bool AllThreadsEnded { get; private set; } = true;
+
     public void Dispose()
     {
         if (_disposed)
@@ -135,6 +144,7 @@ public sealed partial class LiveDetectionService : IDisposable
         var indexEnded = JoinThread(_indexThread, "index", 3);
         _trace?.Dispose();
 
+        AllThreadsEnded = captureEnded && trackingEnded && stoppedEnded && readsEnded && scanEnded && miningEnded && cacheEnded && indexEnded;
         if (!trackingEnded || !stoppedEnded || !readsEnded || !scanEnded || !miningEnded || !cacheEnded || !indexEnded)
             return;
 
@@ -193,10 +203,10 @@ public sealed partial class LiveDetectionService : IDisposable
     {
         CollectCpu();
         var markers = _index.Current.Markers;
-        return stats.TakeSummary(now, markers.Count, markers.Count(m => m.Status == PlateStatus.Confirmed), _pipe.MaxReadsPerTick, TrackingCapFps(), _counters.Take());
+        return stats.TakeSummary(now, markers.Count, markers.Count(m => m.Status == PlateStatus.Confirmed), _pipe.MaxReadsPerTick, 0, _counters.Take());
     }
 
-    private int TrackingCapFps() => _services.Settings.TrackingCapFps;
+    private PipelineSettings Rated(CpuUsage usage) => _rated.TryGetValue(usage, out var rated) ? rated : _rated[CpuUsage.Normal];
 
     private void LogRenderSummary()
     {

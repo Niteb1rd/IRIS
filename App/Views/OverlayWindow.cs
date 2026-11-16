@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Iris.App.Services;
 using Iris.Core.Overlay;
 using Iris.Core.Config;
@@ -34,9 +35,14 @@ public sealed class OverlayWindow : IDisposable
     private OverlayModel? _model;
     private AppSettings? _settings;
     private string? _toast;
+    private readonly PanelEntryMotion? _motion;
+    private DispatcherTimer? _motionTimer;
+    private bool _motionFrame;
 
     private DrawingVisual? _visual;
     private RenderTargetBitmap? _target;
+    private PanelCurve? _curve;
+    private bool _curveFailed;
     private int _targetWidth;
     private int _targetHeight;
 
@@ -46,6 +52,8 @@ public sealed class OverlayWindow : IDisposable
         _warn = warn;
         _visibleInCapture = visibleInCapture;
         _painter = new OverlayPainter { Layer = layer };
+        if (layer == OverlayLayer.Panel)
+            _motion = new PanelEntryMotion();
     }
 
     private bool IsShown => _window is { IsShown: true };
@@ -59,6 +67,7 @@ public sealed class OverlayWindow : IDisposable
         if (_closed)
             return;
         _closed = true;
+        _motionTimer?.Stop();
         var window = _window;
         _window = null;
         if (window is not null)
@@ -68,6 +77,8 @@ public sealed class OverlayWindow : IDisposable
 
         _visual = null;
         _target = null;
+        _curve?.Dispose();
+        _curve = null;
     }
 
     private bool EnsureWindow()
@@ -122,7 +133,9 @@ public sealed class OverlayWindow : IDisposable
 
         var boundsChanged = !_hasBounds || bounds != _bounds;
         var contentChanged = boundsChanged || !SameContent(model) || settings != _settings || toast != _toast;
-        if (!contentChanged && IsShown && !_retryUpdate)
+        var motionFrame = _motionFrame;
+        _motionFrame = false;
+        if (!contentChanged && IsShown && !_retryUpdate && !motionFrame)
             return;
 
         _bounds = bounds;
@@ -132,13 +145,18 @@ public sealed class OverlayWindow : IDisposable
         _toast = toast;
 
         var showsPanel = _layer is OverlayLayer.All or OverlayLayer.Panel;
-        var layout = showsPanel ? PanelLayout.Compute(model.Panel, bounds.Width, bounds.Height, settings, model.Note, toast) : PanelLayoutResult.Empty;
+        var now = (long)StopwatchClock.Shared.NowMs;
+        var entries = _motion?.Entries(model.Panel, now) ?? model.Panel;
+        var layout = showsPanel ? PanelLayout.Compute(entries, bounds.Width, bounds.Height, settings, model.Note, toast) : PanelLayoutResult.Empty;
 
+        _painter.Motion = _motion;
+        _painter.NowMs = now;
         _painter.MiningScale = settings.MiningLabelZoomPercent / 100.0;
+        _painter.Accent = settings.UiAccentColor;
         var fit = Fit(model, layout, bounds);
         if (fit.IsEmpty)
         {
-            HideOverlay();
+            HideWindow();
             return;
         }
 
@@ -170,10 +188,43 @@ public sealed class OverlayWindow : IDisposable
             window.Show();
         if (firstShow || boundsChanged || fitChanged)
             window.AssertTopmost();
+        KeepMoving(now);
+    }
+
+    private void KeepMoving(long now)
+    {
+        if (_motion is null || !_motion.IsMoving(now))
+        {
+            _motionTimer?.Stop();
+            return;
+        }
+        if (_motionTimer is null)
+        {
+            _motionTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
+            _motionTimer.Tick += (_, _) =>
+            {
+                if (_closed || _model is null || _settings is null || !IsShown)
+                {
+                    _motionTimer?.Stop();
+                    return;
+                }
+                _motionFrame = true;
+                Present(_model, _bounds, _settings, _toast);
+            };
+        }
+        if (!_motionTimer.IsEnabled)
+            _motionTimer.Start();
     }
 
     public void HideOverlay()
     {
+        _motion?.Settle();
+        HideWindow();
+    }
+
+    private void HideWindow()
+    {
+        _motionTimer?.Stop();
         _window?.Hide();
         _retryUpdate = false;
         _updateFailures = 0;
@@ -215,7 +266,8 @@ public sealed class OverlayWindow : IDisposable
             using (var context = _visual.RenderOpen())
                 _painter.Paint(context);
             _target.Render(_visual);
-            _target.CopyPixels(new Int32Rect(0, 0, width, height), bits, window.Stride * surfaceHeight, window.Stride);
+            if (!DrawCurved(bits, window.Stride, width, height))
+                _target.CopyPixels(new Int32Rect(0, 0, width, height), bits, window.Stride * surfaceHeight, window.Stride);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or OutOfMemoryException or COMException)
         {
@@ -242,6 +294,26 @@ public sealed class OverlayWindow : IDisposable
         return false;
     }
 
+    private bool DrawCurved(IntPtr bits, int stride, int width, int height)
+    {
+        var depth = CurveDepth();
+        if (depth <= 0 || _curveFailed)
+            return false;
+        try
+        {
+            (_curve ??= new PanelCurve()).Draw(_target!, bits, stride, width, height, _fit, _bounds.Width, _bounds.Height, depth);
+            return true;
+        }
+        catch (Exception ex) when (ex is OpenCvSharp.OpenCVException or OpenCvSharp.OpenCvSharpException or DllNotFoundException or ArgumentException)
+        {
+            _curveFailed = true;
+            _warn?.Invoke($"The {_layer} overlay could not be bent onto the curved glass ({ex.GetType().Name}: {ex.Message}); it is drawn flat");
+            return false;
+        }
+    }
+
+    private double CurveDepth() => _layer == OverlayLayer.Panel && _settings is { } settings ? ScreenCurve.DepthFor(settings.UiCurvePercent) : 0;
+
     private static int Bucket(int size) => (size + LiveSettings.SurfaceBucketPx - 1) / LiveSettings.SurfaceBucketPx * LiveSettings.SurfaceBucketPx;
 
     private bool SameContent(OverlayModel model) =>
@@ -267,12 +339,8 @@ public sealed class OverlayWindow : IDisposable
             return OverlayWindowFit.Choose(_fit.IsEmpty ? null : _fit, new PixelRect(box.X, box.Y, box.Width, box.Height), whole, 4.0);
         }
 
-        foreach (var slot in layout.Slots)
-            parts.Add(slot.Rect);
-        if (layout.MoreText is not null)
-            parts.Add(layout.MoreRect);
-        foreach (var message in layout.Messages)
-            parts.Add(message.Rect);
+        if (!layout.Frame.IsEmpty)
+            parts.Add(OverlayWindowFit.Inflate(layout.Frame, PanelLook.HaloPx * PanelLook.Scale(bounds.Height) + ScreenCurve.MaxShiftPx(bounds.Width, CurveDepth())));
 
         var needed = OverlayWindowFit.Union(parts);
         if (needed is null)

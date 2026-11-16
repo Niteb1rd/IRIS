@@ -107,7 +107,7 @@ public partial class ConfigWindow
             }
             catch (Win32Exception)
             {
-                Process.Start(new ProcessStartInfo("notepad.exe", "\"" + path + "\"") { UseShellExecute = true });
+                Process.Start(new ProcessStartInfo(WindowsTools.Notepad) { UseShellExecute = false, ArgumentList = { path } });
             }
         }
         catch (Exception ex)
@@ -186,7 +186,7 @@ public partial class ConfigWindow
         }
 
         RefreshStateUi();
-        if (!_services.ListFileMissing && FooterStatus.Text == MissingListNotice)
+        if (!_services.ListFileMissing && FooterStatus.FullText == MissingListNotice)
             SetFooter(string.Empty);
         if (changes.Message is { } message)
             SetFooter(message);

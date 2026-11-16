@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using Iris.Core.Pipeline;
 using OpenCvSharp;
 
@@ -9,17 +10,30 @@ public interface IFrameSource : IDisposable
 {
     string Name { get; }
 
-    FrameArrival AcquireNextFrame(IntPtr hwnd);
+    FrameArrival AcquireNextFrame(IntPtr hwnd, int timeoutMs);
+
+    WaitHandle? ArrivalHandle { get; }
+
+    WaitHandle? CompletionHandle { get; }
+
+    bool CanTakeFrame { get; }
+
+    bool CanTakeScan { get; }
 
     void ReleaseHeldFrame();
 
-    GrabRegionsResult CopyHeldFrameInto(IReadOnlyList<Rect> regions, bool firstIsScan, IReadOnlyList<Mat> destinations, bool deferScan = false);
+    CopyIssue IssueHeldFrameCopies(IReadOnlyList<Rect> regions, bool firstIsScan);
 
-    bool ReadPendingScan(out string? problem);
+    ReadbackState Poll(ReadbackTicket ticket);
+
+    ReadbackState ReadInto(ReadbackTicket ticket, IReadOnlyList<Mat> destinations, bool raw, out string? problem);
+
+    void Abandon(ReadbackTicket ticket);
 
     void Release();
-
-    CopyTimes LastCopyTimes { get; }
 }
 
-public readonly record struct CopyTimes(double IssueMs, double ReadMs);
+public readonly record struct CopyIssue(GrabStatus Status, string? Message, ReadbackTicket Patches, ReadbackTicket Scan, double IssueMs)
+{
+    public static CopyIssue Unavailable(string message) => new(GrabStatus.Unavailable, message, default, default, 0.0);
+}

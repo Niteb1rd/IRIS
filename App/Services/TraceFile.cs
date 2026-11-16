@@ -17,7 +17,7 @@ internal sealed class TraceFile : ITraceSink, IDisposable
     private readonly Action<string> _log;
     private readonly ConcurrentQueue<string> _queue = new();
     private readonly AutoResetEvent _wake = new(false);
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private Thread? _thread;
     private volatile bool _open;
     private volatile bool _stopping;

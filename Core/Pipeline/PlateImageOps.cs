@@ -12,7 +12,9 @@ public sealed record ReadResult(
     PixelRect? Anchor = null,
     IReadOnlyList<PixelRect>? Rows = null,
     PlateColor? Color = null,
-    NameLineInfo? NameLine = null)
+    NameLineInfo? NameLine = null,
+    double MinLetterMargin = double.NaN,
+    IReadOnlyList<double>? LetterMargins = null)
 {
     public const string NoDistanceLine = "nodist";
 
@@ -43,8 +45,6 @@ public interface IPlateImageOps
 
     ReadResult Read(ReadItem item);
 
-    Mat? MakeTemplate(CropImage crop, PixelRect nameBox, out PlateColorClass templateClass);
-
     bool ReadDistance(CropImage crop, PixelRect line) => true;
 
     bool ReadDistanceNear(CropImage crop, PixelRect expected, double margin) => ReadDistance(crop, expected);
@@ -56,7 +56,6 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
 {
     private readonly NameplateDetector _scanDetector;
     private readonly NameplateDetector _cropDetector;
-    private readonly PlateSeedBuilder _seeds;
     private readonly NameplateDetectorSettings _cropSettings;
     private readonly int _windowHeight;
     private readonly Mat _bgrBox = new();
@@ -69,7 +68,6 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
         _cropSettings = baseSettings with { RegionLeft = 0.0, RegionRight = 1.0, RegionTop = 0.0, RegionBottom = 1.0, ScaleHeight = geometry.WindowHeight };
         _scanDetector = new NameplateDetector(reader, geometry.DetectorSettings) { ContrastSink = contrastSink, Layers = Layers };
         _cropDetector = new NameplateDetector(reader, _cropSettings) { ContrastSink = contrastSink, Layers = Layers };
-        _seeds = new PlateSeedBuilder(baseSettings);
     }
 
     public ScanGeometry Geometry { get; }
@@ -380,19 +378,10 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
         return new ReadResult(ObservationClass.Unclear, "nothing");
     }
 
-    public Mat? MakeTemplate(CropImage crop, PixelRect nameBox, out PlateColorClass templateClass)
-    {
-        var local = new Rect(
-            (int)Math.Round(nameBox.X - crop.Origin.X), (int)Math.Round(nameBox.Y - crop.Origin.Y),
-            (int)Math.Round(nameBox.Width), (int)Math.Round(nameBox.Height));
-        return _seeds.MakeTemplate(crop.Image, local, _windowHeight, out templateClass);
-    }
-
     public void Dispose()
     {
         _scanDetector.Dispose();
         _cropDetector.Dispose();
-        _seeds.Dispose();
         _bgrBox.Dispose();
     }
 
@@ -474,7 +463,9 @@ public sealed class DetectorImageOps : IPlateImageOps, IDisposable
         PixelRect Window(Rect r) => new(r.X + origin.X, r.Y + origin.Y, r.Width, r.Height);
         var lowest = rows.OrderByDescending(r => r.Y).First();
         var nameLine = new NameLineInfo(lowest.Width, lowest.Height, line.Y - lowest.Y, _cropDetector.InkColour(image, lowest), _cropDetector.ColumnInk(lowest));
-        return new ReadResult(ObservationClass.Name, string.Empty, text, glyphs, Window(line), rows.Select(Window).ToList(), color, nameLine);
+        var margin = reads.Aggregate(double.PositiveInfinity, (least, rowRead) => double.IsNaN(least) || double.IsNaN(rowRead.MinMargin) ? double.NaN : Math.Min(least, rowRead.MinMargin));
+        IReadOnlyList<double>? letterMargins = reads.All(r => r.Margins is { } m && m.Count == r.Text.Length) ? reads.SelectMany(r => r.Margins!).ToList() : null;
+        return new ReadResult(ObservationClass.Name, string.Empty, text, glyphs, Window(line), rows.Select(Window).ToList(), color, nameLine, margin, letterMargins);
     }
 
     private static ReadResult Bad(NameRowRead read) =>
@@ -490,10 +481,4 @@ public sealed class NullImageOps : IPlateImageOps
     public PixelRect? Check(CheckItem item) => null;
 
     public ReadResult Read(ReadItem item) => new(ObservationClass.Unclear, "nothing");
-
-    public Mat? MakeTemplate(CropImage crop, PixelRect nameBox, out PlateColorClass templateClass)
-    {
-        templateClass = PlateColorClass.Any;
-        return null;
-    }
 }

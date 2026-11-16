@@ -30,7 +30,7 @@ public sealed partial class ScanWorker : IDisposable
         public void Dispose() => Template.Dispose();
     }
 
-    private readonly PipelineSettings _settings;
+    private PipelineSettings _settings;
     private readonly PipelineStats? _stats;
     private readonly IUpdateSink _sink;
     private readonly IMonotonicClock _clock;
@@ -53,12 +53,16 @@ public sealed partial class ScanWorker : IDisposable
     private string? _templateWhy;
     private double _templateDistLh = double.NaN;
     private double _templateReachLh = double.NaN;
+    private bool _templateClipped;
+    private int? _checkBackground;
     private bool _templateMoved;
     private int _checkTries, _failOwnName, _failOtherPlate, _failOther;
     private long _checkReadTicks, _checkTemplateTicks;
     private double _checkMaskMs;
     private readonly AberrationWatch _aberration = new();
     private double _aberrationNoteSinceMs = double.NaN;
+
+    public void UseRates(PipelineSettings settings) => _settings = settings;
 
     public ScanWorker(PipelineSettings settings, IPlateImageOps ops, ITemplateMatcher? matcher, IUpdateSink sink, IMonotonicClock clock, PipelineStats? stats = null, ILog? log = null, IClock? wallClock = null)
     {

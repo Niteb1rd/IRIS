@@ -56,8 +56,6 @@ public sealed class GameWindowTracker : IDisposable
             _timer.Start();
     }
 
-    public void Stop() => _timer.Stop();
-
     public GameWindowSnapshot CheckWithModeNow()
     {
         try

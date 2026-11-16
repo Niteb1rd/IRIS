@@ -331,7 +331,18 @@ public sealed partial class NameplateDetector : IDisposable
 
         if (_settings.UnderscoreHyphenRule)
             text = UnderscoreHyphenRule.Correct(read, text);
-        return new NameRowRead(text, score, true, true, mask, evidence);
+        var margins = read.Margins is { } all && all.Count == text.Length ? all : null;
+        return new NameRowRead(text, score, true, true, mask, evidence, MinMargin(read, text), margins);
+    }
+
+    private static double MinMargin(PieceRead read, string text)
+    {
+        if (read.Margins is not { } margins || margins.Count != text.Length)
+            return double.NaN;
+        var least = double.PositiveInfinity;
+        foreach (var margin in margins)
+            least = Math.Min(least, margin);
+        return least;
     }
 
     public void Dispose()

@@ -1,4 +1,5 @@
 using System.Text;
+using Iris.Core.Lookup;
 
 namespace Iris.Core.Config;
 
@@ -11,6 +12,8 @@ public enum FileChangeKind
     Missing,
 
     Locked,
+
+    TooLarge,
 }
 
 public sealed class FileChange
@@ -31,6 +34,7 @@ public sealed class FileChange
     internal static readonly FileChange NoChange = new(FileChangeKind.Unchanged, null, null);
     internal static readonly FileChange Gone = new(FileChangeKind.Missing, null, null);
     internal static readonly FileChange InUse = new(FileChangeKind.Locked, null, null);
+    internal static readonly FileChange Oversized = new(FileChangeKind.TooLarge, null, null);
 
     internal static FileChange Modified(string text, string hash) => new(FileChangeKind.Changed, text, hash);
 }
@@ -43,7 +47,7 @@ public sealed class FileChangeDetector
 
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly Action<TimeSpan> _sleep;
     private readonly Func<string, byte[]> _readBytes;
 
@@ -54,16 +58,19 @@ public sealed class FileChangeDetector
 
     private long _generation;
 
-    public FileChangeDetector(string path, Action<TimeSpan>? sleep = null, Func<string, byte[]>? readBytes = null)
+    public FileChangeDetector(string path, Action<TimeSpan>? sleep = null, Func<string, byte[]>? readBytes = null, long maxBytes = CacheSettings.ConfigMaxFileBytes)
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new ArgumentException("The path must not be empty.", nameof(path));
         Path = path;
+        MaxBytes = maxBytes;
         _sleep = sleep ?? (span => Thread.Sleep(span));
-        _readBytes = readBytes ?? (file => ReadSharedBytes(file));
+        _readBytes = readBytes ?? ReadSharedBytes;
     }
 
     public string Path { get; }
+
+    public long MaxBytes { get; }
 
     public string? KnownHash
     {
@@ -154,7 +161,19 @@ public sealed class FileChangeDetector
 
     private FileChange ReadAndRemember(DateTime time, long length, long generation, bool forced)
     {
-        var bytes = ReadWithRetries();
+        var bytes = length > MaxBytes ? null : ReadWithRetries();
+        if (length > MaxBytes || bytes is { Length: var read } && read > MaxBytes)
+        {
+            lock (_gate)
+            {
+                if (generation != _generation)
+                    return FileChange.NoChange;
+                _writeTime = time;
+                _length = length;
+                _hash = null;
+                return FileChange.Oversized;
+            }
+        }
         if (bytes is null)
             return FileChange.InUse;
 
@@ -216,11 +235,9 @@ public sealed class FileChangeDetector
         }
     }
 
-    private static byte[] ReadSharedBytes(string path)
+    private byte[] ReadSharedBytes(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var buffer = new MemoryStream();
-        stream.CopyTo(buffer);
-        return buffer.ToArray();
+        return BoundedFile.ReadBytes(stream, MaxBytes);
     }
 }

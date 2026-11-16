@@ -4,7 +4,7 @@ namespace Iris.Core.Pipeline;
 
 public sealed class SessionNames
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly HashSet<string> _notFound = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _verified = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string?> _byFold = new(StringComparer.Ordinal);

@@ -31,7 +31,7 @@ public enum RenderClockKind
 
 public sealed class RenderStats
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private int _frames;
     private int _redraws;
     private int _lateWaits;

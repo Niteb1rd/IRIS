@@ -117,6 +117,11 @@ public static class ConfigPoller
             case FileChangeKind.Missing:
                 return new SocialListPoll(PollKind.Missing);
 
+            case FileChangeKind.TooLarge:
+                var tooLargeList = new ConfigLoadResult();
+                tooLargeList.Errors.Add(BoundedFile.TooLargeText(file.Detector.MaxBytes));
+                return new SocialListPoll(PollKind.Rejected, tooLargeList, null, tooLargeList.Errors.ToList());
+
             case FileChangeKind.Changed:
                 var parsed = SocialConfigToml.Read(change.Text!);
                 if (!parsed.IsValid)
@@ -141,6 +146,11 @@ public static class ConfigPoller
         {
             case FileChangeKind.Missing:
                 return new SettingsPoll(PollKind.Missing);
+
+            case FileChangeKind.TooLarge:
+                var tooLargeSettings = new AppSettingsLoadResult(AppSettings.Defaults, isNew: false);
+                tooLargeSettings.Errors.Add(BoundedFile.TooLargeText(file.Detector.MaxBytes));
+                return new SettingsPoll(PollKind.Rejected, tooLargeSettings, null, tooLargeSettings.Errors.ToList());
 
             case FileChangeKind.Changed:
                 var parsed = AppSettingsToml.Read(change.Text!);

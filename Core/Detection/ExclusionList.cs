@@ -7,7 +7,7 @@ public sealed class ExclusionList
     private readonly string _path;
     private readonly IClock _clock;
     private readonly ILog _log;
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly FileChangeDetector _detector;
     private HashSet<string> _names = new(StringComparer.OrdinalIgnoreCase);
 
@@ -87,6 +87,10 @@ public sealed class ExclusionList
 
             case FileChangeKind.Locked:
                 LogProblemOnce("could not read the file (another program has it open); keeping the list from before");
+                return false;
+
+            case FileChangeKind.TooLarge:
+                LogProblemOnce("the file is larger than " + _detector.MaxBytes / (1024 * 1024) + " MB and was not read; keeping the list from before");
                 return false;
 
             default:

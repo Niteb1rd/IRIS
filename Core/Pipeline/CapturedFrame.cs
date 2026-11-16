@@ -165,7 +165,7 @@ public sealed class CapturedFrame
 
 public sealed class FrameHub : IDisposable
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly Stack<CapturedFrame> _free = new();
     private readonly List<CapturedFrame> _all = new();
     private CapturedFrame? _newest;

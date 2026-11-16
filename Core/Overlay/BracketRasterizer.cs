@@ -3,16 +3,22 @@ namespace Iris.Core.Overlay;
 
 public sealed class BracketRasterizer
 {
-    public const float Opacity = 0.6f;
+    public const float Opacity = 0.7f;
 
-    private const int CurveSteps = 8;
-    private const float DarkAlpha = 0xE6 / 255f * Opacity;
-    private const float ColorAlpha = Opacity;
+    public const float DarkAlpha = 0.55f;
+
+    public const float GlowAlpha = 0.45f;
+    public const float GlowPeak = 0.64f;
+
+    private const int CurveSteps = 4;
     private static readonly (float R, float G, float B) DarkColor = (0x0A, 0x0A, 0x0F);
 
     private readonly Segments _left = new();
     private readonly Segments _right = new();
     private float[] _coverage = Array.Empty<float>();
+    private const int GlowSteps = 256;
+    private readonly float[] _glow = new float[GlowSteps + 1];
+    private (float Radius, float Sigma, float Peak) _glowFor;
 
     public void Draw(byte[] pixels, int stride, int width, int height, IReadOnlyList<BracketItem> brackets, double originX, double originY, double screenHeight)
     {
@@ -21,26 +27,40 @@ public sealed class BracketRasterizer
         if (_coverage.Length < width * height)
             _coverage = new float[width * height];
 
+        var scale = BracketMetrics.Scale(screenHeight);
         foreach (var item in brackets)
         {
             var box = item.Box;
             var m = BracketMetrics.For(box, screenHeight);
-            BuildShape(_left, item.Kind, m.LeftX(box) - originX, m.Top - originY, m.Width, m.Height, mirrored: false);
-            BuildShape(_right, item.Kind, m.RightX(box) - originX, m.Top - originY, m.Width, m.Height, mirrored: true);
+            BuildShape(_left, item.Kind, m.LeftX(box) - originX, m.Top - originY, m.Width, m.Height, scale, inward: 1);
+            BuildShape(_right, item.Kind, m.RightX(box) + m.Width - originX, m.Top - originY, m.Width, m.Height, scale, inward: -1);
 
             var (r, g, b) = OverlayPalette.Rgb(item.Color);
-            var darkRadius = (float)((m.Stroke + 2 * m.Outline) / 2);
+            var darkRadius = (float)m.Bleed;
             var colorRadius = (float)(m.Stroke / 2);
+            var sigma = (float)m.GlowSigma;
+            var reach = (float)(m.GlowSigma * BracketMetrics.GlowSigmas);
 
-            Stroke(pixels, stride, width, height, _left, darkRadius, DarkColor.R, DarkColor.G, DarkColor.B, DarkAlpha);
-            Stroke(pixels, stride, width, height, _right, darkRadius, DarkColor.R, DarkColor.G, DarkColor.B, DarkAlpha);
-            Stroke(pixels, stride, width, height, _left, colorRadius, r, g, b, ColorAlpha);
-            Stroke(pixels, stride, width, height, _right, colorRadius, r, g, b, ColorAlpha);
+            Stroke(pixels, stride, width, height, _left, darkRadius, 0f, 0f, DarkColor.R, DarkColor.G, DarkColor.B, DarkAlpha);
+            Stroke(pixels, stride, width, height, _right, darkRadius, 0f, 0f, DarkColor.R, DarkColor.G, DarkColor.B, DarkAlpha);
+            Stroke(pixels, stride, width, height, _left, reach, sigma, GlowPeak, r, g, b, GlowAlpha);
+            Stroke(pixels, stride, width, height, _right, reach, sigma, GlowPeak, r, g, b, GlowAlpha);
+            Stroke(pixels, stride, width, height, _left, colorRadius, 0f, 0f, r, g, b, Opacity);
+            Stroke(pixels, stride, width, height, _right, colorRadius, 0f, 0f, r, g, b, Opacity);
         }
     }
 
-    private void Stroke(byte[] pixels, int stride, int width, int height, Segments shape, float radius, float r, float g, float b, float alpha)
+    private void Stroke(byte[] pixels, int stride, int width, int height, Segments shape, float radius, float sigma, float peak, float r, float g, float b, float alpha)
     {
+        var glow = sigma > 0f;
+        var radiusSquared = radius * radius;
+        var glowStep = glow ? radiusSquared / GlowSteps : 0f;
+        if (glow && _glowFor != (radius, sigma, peak))
+        {
+            for (var i = 0; i <= GlowSteps; i++)
+                _glow[i] = peak * MathF.Exp(-(i * glowStep) / (2f * sigma * sigma));
+            _glowFor = (radius, sigma, peak);
+        }
         if (shape.Count == 0)
             return;
         var coverage = _coverage;
@@ -79,11 +99,22 @@ public sealed class BracketRasterizer
                     t = t < 0f ? 0f : t > 1f ? 1f : t;
                     var ex = px - (x0 + t * dx);
                     var ey = py - (y0 + t * dy);
-                    var c = radius + 0.5f - MathF.Sqrt(ex * ex + ey * ey);
-                    if (c <= 0f)
-                        continue;
-                    if (c > 1f)
-                        c = 1f;
+                    var dSquared = ex * ex + ey * ey;
+                    float c;
+                    if (glow)
+                    {
+                        if (dSquared >= radiusSquared)
+                            continue;
+                        c = _glow[(int)(dSquared / glowStep)];
+                    }
+                    else
+                    {
+                        c = radius + 0.5f - MathF.Sqrt(dSquared);
+                        if (c <= 0f)
+                            continue;
+                        if (c > 1f)
+                            c = 1f;
+                    }
                     if (c > coverage[row + x])
                         coverage[row + x] = c;
                 }
@@ -114,39 +145,46 @@ public sealed class BracketRasterizer
 
     private static byte ToByte(float value) => value >= 255f ? (byte)255 : value <= 0f ? (byte)0 : (byte)(value + 0.5f);
 
-    private static void BuildShape(Segments shape, MatchKind kind, double x, double y, double width, double height, bool mirrored)
+    private static void BuildShape(Segments shape, MatchKind kind, double railX, double top, double ends, double height, double scale, int inward)
     {
         shape.Count = 0;
-        (float X, float Y) P(double u, double v) => ((float)(mirrored ? x + (1 - u) * width : x + u * width), (float)(y + v * height));
+        (float X, float Y) P(double x, double y) => ((float)x, (float)y);
+        var x = railX;
+        var mid = top + height / 2;
+        var bottom = top + height;
 
         switch (kind)
         {
             case MatchKind.PlayerList:
             {
-                var current = P(1, 0);
-                current = Curve(shape, current, P(0.5, 0), P(0.5, 0.12));
-                current = Line(shape, current, P(0.5, 0.38));
-                current = Curve(shape, current, P(0.5, 0.5), P(0, 0.5));
-                current = Curve(shape, current, P(0.5, 0.5), P(0.5, 0.62));
-                current = Line(shape, current, P(0.5, 0.88));
-                Curve(shape, current, P(0.5, 1), P(1, 1));
+                var bump = BracketMetrics.SmallBumpPx * scale;
+                var half = BracketMetrics.SmallBumpHalfPx * scale;
+                var current = Curve(shape, P(x + inward * ends, top), P(x, top), P(x, top + ends));
+                current = Line(shape, current, P(x, mid - half));
+                current = Line(shape, current, P(x - inward * bump, mid));
+                current = Line(shape, current, P(x, mid + half));
+                current = Line(shape, current, P(x, bottom - ends));
+                Curve(shape, current, P(x, bottom), P(x + inward * ends, bottom));
                 break;
             }
 
             case MatchKind.OrgList:
             {
-                var current = P(1, 0);
-                current = Line(shape, current, P(0, 0));
-                current = Line(shape, current, P(0, 1));
-                Line(shape, current, P(1, 1));
+                var current = Line(shape, P(x + inward * ends, top), P(x, top));
+                current = Line(shape, current, P(x, bottom));
+                Line(shape, current, P(x + inward * ends, bottom));
                 break;
             }
 
             default:
             {
-                var current = P(1, 0);
-                current = Line(shape, current, P(0, 0.5));
-                Line(shape, current, P(1, 1));
+                var bump = BracketMetrics.BigBumpPx * scale;
+                var half = BracketMetrics.BigBumpHalfPx * scale;
+                var rail = Math.Max(0.0, height / 2 - half) * BracketMetrics.AngleRailShare;
+                var current = Line(shape, P(x, mid - half - rail), P(x, mid - half));
+                current = Line(shape, current, P(x - inward * bump, mid));
+                current = Line(shape, current, P(x, mid + half));
+                Line(shape, current, P(x, mid + half + rail));
                 break;
             }
         }

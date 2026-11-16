@@ -2,7 +2,7 @@ namespace Iris.Core.Lookup;
 
 public sealed class RsiCircuitBreaker
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private int _count;
     private bool _open;
     private DateTimeOffset _openUntil;
@@ -24,6 +24,12 @@ public sealed class RsiCircuitBreaker
             }
 
             remaining = _openUntil - now;
+            if (remaining > CacheSettings.RsiBreakerPause)
+            {
+                _openUntil = now + CacheSettings.RsiBreakerPause;
+                remaining = CacheSettings.RsiBreakerPause;
+            }
+
             return true;
         }
     }

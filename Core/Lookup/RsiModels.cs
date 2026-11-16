@@ -4,7 +4,7 @@ namespace Iris.Core.Lookup;
 
 public sealed record PlayerOrgs(string Handle, IReadOnlyList<OrgMembership> Orgs);
 
-public sealed record PlayerProfile(string Handle, string? Moniker, string? CitizenRecord, bool HasRecordLabel);
+public sealed record PlayerProfile(string Handle, string? Moniker, string? CitizenRecord, bool HasRecordLabel, DateOnly? Enlisted = null, bool EnlistedUnreadable = false);
 
 public sealed record OrgInfo(
     string Sid,

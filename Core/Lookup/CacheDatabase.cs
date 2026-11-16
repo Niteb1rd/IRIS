@@ -18,7 +18,7 @@ public sealed partial class CacheDatabase : IDisposable
 
     private readonly SqliteConnection _connection;
     private readonly bool _ownsConnection;
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly LruCache<string, object> _memory;
     private SqliteTransaction? _transaction;
     private int _diskReads;
@@ -172,6 +172,8 @@ public sealed partial class CacheDatabase : IDisposable
                     if (!HasColumn("player_orgs", "name"))
                         Execute(PlayerOrgNameColumn);
                     Execute(PlayerExtraTable);
+                    if (!HasColumn("player_extra", "enlisted"))
+                        Execute(EnlistedColumn);
                 });
                 return;
             }
@@ -190,6 +192,8 @@ public sealed partial class CacheDatabase : IDisposable
                 if (!HasColumn("player_orgs", "name"))
                     Execute(PlayerOrgNameColumn);
                 Execute(PlayerExtraTable);
+                if (!HasColumn("player_extra", "enlisted"))
+                    Execute(EnlistedColumn);
                 Execute("PRAGMA user_version = " + CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture));
             });
         }

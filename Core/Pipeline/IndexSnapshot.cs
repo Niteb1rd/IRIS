@@ -24,10 +24,6 @@ public sealed class IndexSnapshot
 
     public double NewFrameMs { get; init; } = double.NegativeInfinity;
 
-    public double NameConfirmedMs { get; init; } = double.NegativeInfinity;
-
-    public double SettingsChangedMs { get; init; } = double.NegativeInfinity;
-
     public double TrackedFrameMs { get; init; } = double.NegativeInfinity;
 
     public double PrevTrackedFrameMs { get; init; } = double.NaN;

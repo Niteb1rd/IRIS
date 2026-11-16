@@ -1,3 +1,5 @@
+using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Iris.Core.Detection;
@@ -17,7 +19,7 @@ public sealed class LetterModel
 
     private sealed class Layer
     {
-        public Layer(int rows, int cols, float[] weights, float[] biases)
+        public Layer(int rows, int cols, double[] weights, float[] biases)
         {
             Rows = rows;
             Cols = cols;
@@ -29,7 +31,7 @@ public sealed class LetterModel
 
         public int Cols { get; }
 
-        public float[] Weights { get; }
+        public double[] Weights { get; }
 
         public float[] Biases { get; }
     }
@@ -94,7 +96,7 @@ public sealed class LetterModel
                 var cols = checked((int)reader.ReadUInt32());
                 if (rows != expectedRows || cols <= 0 || (long)rows * cols > 50_000_000)
                     throw new InvalidDataException($"Layer {l} has an unexpected shape {rows}x{cols}.");
-                var weights = new float[rows * cols];
+                var weights = new double[rows * cols];
                 for (var i = 0; i < weights.Length; i++)
                     weights[i] = reader.ReadSingle();
                 var biases = new float[cols];
@@ -151,9 +153,7 @@ public sealed class LetterModel
                 var x = current[i];
                 if (x == 0.0)
                     continue;
-                var offset = i * cols;
-                for (var j = 0; j < cols; j++)
-                    next[j] += x * weights[offset + j];
+                AddScaledRow(next, weights.AsSpan(i * cols, cols), x);
             }
 
             if (l < _layers.Length - 1)
@@ -180,6 +180,23 @@ public sealed class LetterModel
                     logProbs[j] = Math.Log(Math.Clamp(next[j] / sum, MinProbability, 1.0));
             }
         }
+    }
+
+    private static void AddScaledRow(Span<double> next, ReadOnlySpan<double> row, double x)
+    {
+        var j = 0;
+        if (Vector.IsHardwareAccelerated && next.Length >= Vector<double>.Count)
+        {
+            var scale = new Vector<double>(x);
+            var nextLanes = MemoryMarshal.Cast<double, Vector<double>>(next);
+            var rowLanes = MemoryMarshal.Cast<double, Vector<double>>(row);
+            for (var k = 0; k < nextLanes.Length; k++)
+                nextLanes[k] += scale * rowLanes[k];
+            j = nextLanes.Length * Vector<double>.Count;
+        }
+
+        for (; j < next.Length; j++)
+            next[j] += x * row[j];
     }
 
     public double[] PredictLogProbs(ReadOnlySpan<double> input)

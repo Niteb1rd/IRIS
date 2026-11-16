@@ -18,7 +18,7 @@ public sealed partial class AppServices : IDisposable
     private readonly HttpClient _hostedHttp;
     private readonly HostedConfigClient _hostedClient;
     private readonly CancellationTokenSource _shutdown = new();
-    private readonly object _pollGate = new();
+    private readonly Lock _pollGate = new();
     private bool _isShuttingDown;
 
     private AppServices(
@@ -34,7 +34,6 @@ public sealed partial class AppServices : IDisposable
         _http = http;
         _hostedHttp = hostedHttp;
         _hostedClient = new HostedConfigClient(hostedHttp, Clock, log) { LogRequests = AppVersion.Diagnostics };
-        Rsi = rsi;
         Milestones = new StartupMilestones(log, Clock);
         if (rsi is RsiClient client)
             client.AnswerObserved = Milestones.OnRsiAnswer;
@@ -67,6 +66,7 @@ public sealed partial class AppServices : IDisposable
         CacheSettings = new CacheSettings(Settings.CacheTtlDays);
         Validator = new RowValidator(database, rsi, Clock, CacheSettings, log);
         Refresher = new CacheRefresher(database, rsi, Clock, CacheSettings);
+        Sounds = new UiSoundPlayer(log, Clock);
     }
 
     public IClock Clock => SystemClock.Instance;
@@ -82,8 +82,6 @@ public sealed partial class AppServices : IDisposable
     public CacheDatabase Database { get; }
 
     public ExclusionList Exclusions { get; }
-
-    public IRsiClient Rsi { get; }
 
     public CacheSettings CacheSettings { get; }
 
@@ -129,6 +127,8 @@ public sealed partial class AppServices : IDisposable
 
     public CacheRefresher Refresher { get; }
 
+    public UiSoundPlayer Sounds { get; }
+
     public SocialListLoadResult ListLoad { get; private set; }
 
     public bool ColorRanksFixedAtStartup { get; private set; }
@@ -173,7 +173,7 @@ public sealed partial class AppServices : IDisposable
 
         FileLog.DeleteOlderThan(paths.LogsFolder, TimeSpan.FromDays(30), clock.UtcNow);
         var fileLog = new FileLog(paths.LogsFolder, clock) { Enabled = false };
-        var log = new TeeLog(new InMemoryLog(), fileLog);
+        ILog log = fileLog;
 
         var settingsFile = new WatchedFile(paths.SettingsFile, paths.SettingsLastGoodFile, clock, log);
         var settingsStartup = ConfigStartup.LoadSettings(settingsFile);
@@ -208,7 +208,7 @@ public sealed partial class AppServices : IDisposable
                     : "social-config.txt has errors: " + error);
 
             http = RsiClient.CreateHttpClient();
-            var limiter = new RsiRateLimiter(clock);
+            var limiter = new RsiRateLimiter(clock, burst: CacheSettings.RsiBurstSize, burstGap: CacheSettings.RsiBurstGap);
             var rsi = new RsiClient(http, limiter, clock, AppVersion.Diagnostics ? log : null);
             hostedHttp = HostedConfigClient.CreateHttpClient();
 

@@ -16,11 +16,39 @@ public sealed record PipelineSettings
 
     public double ConfirmSpanMs { get; init; } = 150.0;
 
+    public int ConfirmWindowReads { get; init; } = 3;
+
     public double StableWidthLines { get; init; } = 0.3;
 
     public double StableWidthMinPx { get; init; } = 2.0;
 
     public int StopReads { get; init; } = 3;
+
+    public int RestoredRemeasureReads { get; init; } = 2;
+
+    public int RestoredRemeasureMaxReads { get; init; } = 24;
+
+    public double ConfirmedReadHz { get; init; } = 4.0;
+
+    public double DisputedReadHz { get; init; } = 12.0;
+
+    public double VoteMinMarginNats { get; init; } = 2.0;
+
+    public double StrongLetterMarginNats { get; init; } = 5.0;
+
+    public int StrongDisproofLetters { get; init; } = 3;
+
+    public int DisproofVotes { get; init; } = 3;
+
+    public int BeliefReserveMax { get; init; } = 3;
+
+    public double BeliefContactLines { get; init; } = 1.0;
+
+    public double DisputeEndMs { get; init; } = 500.0;
+
+    public double VoteBlobInkShare { get; init; } = 0.9;
+
+    public double VoteBlobMinWidthLines { get; init; } = 0.5;
 
     public int UnconfirmedCheckFails { get; init; } = 2;
 
@@ -88,7 +116,7 @@ public sealed record PipelineSettings
 
     public double PredictionErrorSmoothing { get; init; } = 0.5;
 
-    public int RenderMissFrames { get; init; } = 1;
+    public double BracketKeepMs { get; init; } = 500.0;
 
     public double RenderLookAheadMaxMs { get; init; } = 120.0;
 
@@ -117,6 +145,8 @@ public sealed record PipelineSettings
     public double LostTemplateSpeedPxPerSec { get; init; } = 1500.0;
 
     public double LostTemplateReachPx { get; init; } = 450.0;
+
+    public double TemplateKeepAliveMaxMs { get; init; } = 10000.0;
 
     public double LineHeightTolerance { get; init; } = 0.3;
 
@@ -162,6 +192,8 @@ public sealed record PipelineSettings
 
     public double ReadRequestMs { get; init; } = 83.0;
 
+    public double ReadPendingMaxMs { get; init; } = 250.0;
+
     public double ScanRequestMs { get; init; } = 250.0;
 
     public double FreshnessMinMs { get; init; } = 60.0;
@@ -181,6 +213,8 @@ public sealed record PipelineSettings
     public double NewMarkerOverlap { get; init; } = 0.2;
 
     public double DuplicateNameReachLines { get; init; } = 16.0;
+
+    public double LostDuplicateEndMs { get; init; } = 1000.0;
 
     public double LostThrottleAfterMs { get; init; } = 1000.0;
 
@@ -286,6 +320,8 @@ public sealed record PipelineSettings
 
     public int ReadCropsPerRun { get; init; } = 600;
 
+    public int OffCentreCropsPerPlate { get; init; } = 2;
+
     public int ReadCropsUnknownPerRun { get; init; } = 80;
 
     public int UnknownReadDistance { get; init; } = 2;
@@ -334,6 +370,13 @@ public sealed record PipelineSettings
             return "ScanHz must be above 0 and at most PlateHz.";
         if (MaxReadsPerTick < 1 || ConfirmReads < 1 || StopReads < 1 || UnconfirmedCheckFails < 1 || ConfirmedCheckFails < 1 || ConfirmedNoTrackChecks < 1 || IgnoredReadsLimit < 1)
             return "The read and check counts must be at least 1.";
+        if (!(ConfirmedReadHz > 0 && DisputedReadHz >= ConfirmedReadHz && DisputedReadHz <= PlateHz) || !(VoteMinMarginNats >= 0) || DisproofVotes < 3
+            || !(StrongLetterMarginNats > 0) || StrongDisproofLetters < 1
+            || BeliefReserveMax < 0 || !(BeliefContactLines >= 0) || !(DisputeEndMs > 0)
+            || !(VoteBlobInkShare > 0 && VoteBlobInkShare <= 1) || !(VoteBlobMinWidthLines > 0))
+            return "The identity reads need 0 < ConfirmedReadHz <= DisputedReadHz <= PlateHz, a margin of at least 0, at least 3 disproof votes, a strong-read margin above 0 and at least 1 strong letter, a reserve and contact reach of at least 0, a dispute end above 0 and a blob rule with 0 < share <= 1 and a width above 0.";
+        if (RestoredRemeasureReads < 1 || RestoredRemeasureMaxReads < 0)
+            return "RestoredRemeasureReads must be at least 1 and RestoredRemeasureMaxReads must not be negative.";
         if (ConfirmSpanMs < 0 || StableWidthLines < 0 || !(StoppedTrackHz > 0))
             return "ConfirmSpanMs and StableWidthLines must not be negative and StoppedTrackHz must be above 0.";
         if (!(LostAfterMs >= 0 && MaxPatchPixels >= 1 && MaxTickPixels >= 1 && MaxPatchWindowShare > 0 && MaxPatchWindowShare <= 1))
@@ -343,11 +386,18 @@ public sealed record PipelineSettings
             return "The lost search, template reach and partial line settings must not be negative.";
         if (!(TemplateThreshold > 0 && TemplateThreshold <= 1))
             return "TemplateThreshold must be above 0 and at most 1.";
-        if (MaxTrackedMarkers < 1 || MaxPlateReadHistory < ConfirmReads || MaxPlateReadHistory < StopReads)
+        if (!(TemplateKeepAliveMaxMs > 0) || !(LostDuplicateEndMs > 0))
+            return "TemplateKeepAliveMaxMs and LostDuplicateEndMs must be above 0.";
+        if (!(ReadPendingMaxMs > 0))
+            return "ReadPendingMaxMs must be above 0.";
+        if (BracketKeepMs > LostDuplicateEndMs)
+            return "BracketKeepMs must not exceed LostDuplicateEndMs: two lost markers with one name would both draw a bracket.";
+        if (MaxTrackedMarkers < 1 || MaxPlateReadHistory < ConfirmReads || MaxPlateReadHistory < StopReads || ConfirmWindowReads < ConfirmReads || MaxPlateReadHistory < ConfirmWindowReads
+            || (ConfirmWindowReads - 1) * 1000.0 / PlateHz < ConfirmSpanMs - 1e-6)
             return "MaxTrackedMarkers must be at least 1, and the read history must hold the reads of a decision.";
         if (!(VelocityWindowMs >= 0 && VelocityWindowFrames > 0 && VelocityWindowMinMs > 0 && LostAfterFrames > 0 && LostAfterMinMs >= 0 && LostAfterMaxMs >= LostAfterMinMs
               && LookAheadFrames > 0 && LookAheadMinMs >= 0 && PredictionErrorGain >= 0 && PredictionErrorSmoothing > 0 && PredictionErrorSmoothing <= 1
-              && RenderMissFrames >= 0 && RenderLookAheadMaxMs >= 0 && PartialAnchorMinPx >= 0))
+              && BracketKeepMs > 0 && RenderLookAheadMaxMs >= 0 && PartialAnchorMinPx >= 0))
             return "The adaptive tracking settings must be positive (the error smoothing at most 1) and the lost-time limits in order.";
         if (!(PartialNameMinFraction > 0 && PartialNameMinFraction <= 1 && PartialNameMin > 0 && PartialNameMin <= 1 && PartialNameMargin >= 0 && PartialNameMinWidthLines > 0
               && KnownNamesMax >= 0 && NameUnverifiedMaxMs >= 0 && NameUnverifiedWidthLines >= 0 && NameUnverifiedMaxMissed >= 0 && NameUnverifiedReachLines >= 0 && MaxSpeedLinesPerMs > 0 && TallNameRowMaxExtraLines >= 0 && TallPartMinExtraPx >= 1 && LostThrottleAfterMs >= 0 && LostThrottleEveryFrames >= 1

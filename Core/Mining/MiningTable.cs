@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Reflection;
+using Iris.Core.Config;
+using Iris.Core.Lookup;
 
 namespace Iris.Core.Mining;
 
@@ -124,7 +126,7 @@ public sealed class MiningTableSource
 
     private readonly string _path;
     private readonly Action<string>? _log;
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private MiningTable _table = MiningTable.Embedded;
     private DateTime? _stamp;
     private double _checkedMs = double.NegativeInfinity;
@@ -165,11 +167,15 @@ public sealed class MiningTableSource
 
             try
             {
-                var table = MiningTable.Parse(File.ReadAllText(_path));
+                var table = MiningTable.Parse(BoundedFile.ReadText(_path, CacheSettings.ConfigMaxFileBytes));
                 _table = table;
                 _log?.Invoke(table.Errors.Count == 0
                     ? $"Mining: using Config\\mining.txt ({table.Resources.Count} resources)"
                     : $"Mining: using Config\\mining.txt ({table.Resources.Count} resources); lines left out: " + string.Join("; ", table.Errors.Take(5)));
+            }
+            catch (FileTooLargeException ex)
+            {
+                _log?.Invoke("Mining: Config\\mining.txt was not used (" + ex.Message + "); the previous table stays in use");
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

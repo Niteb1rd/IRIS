@@ -39,7 +39,7 @@ public static class ReadScheduler
 
 public sealed class ReadPolicy
 {
-    private readonly PipelineSettings _settings;
+    private PipelineSettings _settings;
     private readonly INameResolver _resolver;
     private readonly IReadJudge _judge;
     private readonly WhiteDuplicateRule _duplicates;
@@ -54,8 +54,13 @@ public sealed class ReadPolicy
         _names = names ?? new SessionNames();
     }
 
+    public void UseRates(PipelineSettings settings) => _settings = settings;
+
     public PolicyResult Apply(PlateState plate, ReadObservation observation, long tick, IReadOnlyList<SessionMemoryEntry>? memory = null)
     {
+        if (plate.Recent.Count > 0 && plate.Recent[^1].Frame == observation.Frame)
+            return new PolicyResult(PolicyEvent.None, ReadKind.Unclear, null, null);
+
         plate.ReadsTotal++;
         plate.LastReadMs = observation.Ms;
         var firstName = !plate.EverNamed;
@@ -124,7 +129,7 @@ public sealed class ReadPolicy
 
         var recent = plate.Recent;
         var n = _settings.ConfirmReads;
-        if (kind == ReadKind.Name && recent.Count >= n && IsConfirmable(recent, n, observation.LineHeight))
+        if (kind == ReadKind.Name && recent.Count >= n && IsConfirmable(recent, n, Math.Min(recent.Count, _settings.ConfirmWindowReads), observation.LineHeight))
         {
             if (!decided)
                 return new PolicyResult(PolicyEvent.None, kind, name, duplicateOf);
@@ -145,7 +150,6 @@ public sealed class ReadPolicy
                 if (all)
                 {
                     plate.Status = PlateStatus.Stopped;
-                    plate.StopReason = last.ToString();
                     return new PolicyResult(PolicyEvent.Stopped, kind, name, duplicateOf);
                 }
             }
@@ -160,7 +164,6 @@ public sealed class ReadPolicy
         if (plate.Status is not (PlateStatus.Confirmed or PlateStatus.Stopped) && plate.IgnoredReads >= _settings.IgnoredReadsLimit)
         {
             plate.Status = PlateStatus.Stopped;
-            plate.StopReason = "NotFound";
             return new PolicyResult(PolicyEvent.Stopped, ReadKind.Unclear, null, null);
         }
 
@@ -176,6 +179,8 @@ public sealed class ReadPolicy
         var ambiguous = false;
         foreach (var entry in memory)
         {
+            if (entry.Identity?.Rsi != RsiState.Verified)
+                continue;
             if (entry.LineHeight <= 0.0 || Math.Abs(entry.LineHeight - lineHeight) > Math.Max(_settings.LineHeightMinTolerancePx, _settings.LineHeightTolerance * lineHeight))
                 continue;
             if (entry.Name == name)
@@ -189,23 +194,24 @@ public sealed class ReadPolicy
         return ambiguous ? null : spelling;
     }
 
-    private bool IsConfirmable(IReadOnlyList<ReadRecord> recent, int n, double lineHeight)
+    private bool IsConfirmable(IReadOnlyList<ReadRecord> recent, int n, int window, double lineHeight)
     {
-        var first = recent[recent.Count - n];
+        var last = recent[^1];
         var frames = new HashSet<long>();
         double minWidth = double.MaxValue, maxWidth = double.MinValue;
-        for (var i = recent.Count - n; i < recent.Count; i++)
+        for (var count = 1; count <= window; count++)
         {
-            var r = recent[i];
-            if (r.Kind != ReadKind.Name || r.Name != first.Name)
+            var r = recent[recent.Count - count];
+            if (r.Kind != ReadKind.Name || r.Name != last.Name)
                 return false;
             frames.Add(r.Frame);
             minWidth = Math.Min(minWidth, r.NameWidth);
             maxWidth = Math.Max(maxWidth, r.NameWidth);
+            if (count < n || last.Ms - r.Ms < _settings.ConfirmSpanMs - 1e-6 || frames.Count < n)
+                continue;
+            return maxWidth - minWidth <= Math.Max(_settings.StableWidthMinPx, _settings.StableWidthLines * lineHeight);
         }
 
-        if (frames.Count != n || recent[^1].Ms - first.Ms < _settings.ConfirmSpanMs - 1e-6)
-            return false;
-        return maxWidth - minWidth <= Math.Max(_settings.StableWidthMinPx, _settings.StableWidthLines * lineHeight);
+        return false;
     }
 }

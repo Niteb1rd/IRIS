@@ -117,7 +117,7 @@ public partial class ConfigWindow
             }
 
             var remembered = _services.UpdateSettings(
-                s => s with { HostedConfigUrl = url, HostedConfigLastHash = hash, HostedConfigAutoCheck = wantAutoCheck });
+                s => s with { HostedConfigUrl = url, HostedConfigLastHash = hash, HostedConfigAutoCheck = wantAutoCheck }, readDiskFirst: false);
             LoadSettingsControls();
             SetFooter(remembered.Success
                 ? attempt.Message

@@ -55,6 +55,9 @@ public static class ConfigStartup
 {
     public const string FileInUseMessage = "The file could not be read (another program may have it open).";
 
+    private static string ProblemOf(FileChange read, WatchedFile file) =>
+        read.Kind == FileChangeKind.TooLarge ? BoundedFile.TooLargeText(file.Detector.MaxBytes) : FileInUseMessage;
+
     public static SocialListStartup LoadSocialList(WatchedFile file)
     {
         var read = file.Detector.Load();
@@ -80,7 +83,7 @@ public static class ConfigStartup
         else
         {
             parsed = new ConfigLoadResult();
-            parsed.Errors.Add(FileInUseMessage);
+            parsed.Errors.Add(ProblemOf(read, file));
         }
 
         var errors = parsed.Errors.ToList();
@@ -136,7 +139,7 @@ public static class ConfigStartup
         else
         {
             parsed = new AppSettingsLoadResult(AppSettings.Defaults, isNew: false);
-            parsed.Errors.Add(FileInUseMessage);
+            parsed.Errors.Add(ProblemOf(read, file));
         }
 
         var errors = parsed.Errors.ToList();

@@ -76,12 +76,23 @@ public sealed partial class NameplateDetector
         Cv2.Dilate(kept, _joined, Kernel(Scaled(frameHeight, _settings.JoinWidthPx), 1));
         count = Cv2.ConnectedComponentsWithStats(_joined, _labels, _stats, _centroids, PixelConnectivity.Connectivity8);
         CopyStats(count);
+        var pieces = new List<Rect>(count);
         for (var i = 1; i < count; i++)
         {
-            var x = _statsBuffer[i * 5 + 0];
-            var y = _statsBuffer[i * 5 + 1];
-            var w = _statsBuffer[i * 5 + 2];
             var h = _statsBuffer[i * 5 + 3];
+            if (h >= minHeight && h <= maxHeight)
+                pieces.Add(new Rect(_statsBuffer[i * 5 + 0], _statsBuffer[i * 5 + 1], _statsBuffer[i * 5 + 2], h));
+        }
+
+        if (_settings.BandJoin && pieces.Count > 1)
+            pieces = BandJoin(pieces, Scaled(frameHeight, _settings.BandJoinTopPx), Scaled(frameHeight, _settings.BandJoinBottomPx));
+
+        foreach (var piece in pieces)
+        {
+            var x = piece.X;
+            var y = piece.Y;
+            var w = piece.Width;
+            var h = piece.Height;
             if (h < minHeight || h > maxHeight)
                 continue;
             var isLine = w >= minWidth && w <= maxWidth && w > h * _settings.LineAspectMin;
@@ -99,6 +110,74 @@ public sealed partial class NameplateDetector
         }
 
         return boxes;
+    }
+
+    private static List<Rect> BandJoin(List<Rect> pieces, int topTolerance, int bottomTolerance)
+    {
+        var byX = new int[pieces.Count];
+        for (var i = 0; i < byX.Length; i++)
+            byX[i] = i;
+        Array.Sort(byX, (u, v) => pieces[u].X.CompareTo(pieces[v].X));
+        var parent = new int[pieces.Count];
+        for (var i = 0; i < parent.Length; i++)
+            parent[i] = i;
+
+        int Find(int i)
+        {
+            while (parent[i] != i)
+            {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+
+            return i;
+        }
+
+        var merged = false;
+        for (var s = 0; s < byX.Length; s++)
+        {
+            var a = pieces[byX[s]];
+            for (var t = s + 1; t < byX.Length && pieces[byX[t]].X <= a.X + a.Width; t++)
+            {
+                var c = pieces[byX[t]];
+                if (Math.Abs(a.Y - c.Y) > topTolerance || Math.Abs(a.Y + a.Height - (c.Y + c.Height)) > bottomTolerance)
+                    continue;
+                var ra = Find(byX[s]);
+                var rc = Find(byX[t]);
+                if (ra != rc)
+                {
+                    parent[rc] = ra;
+                    merged = true;
+                }
+            }
+        }
+
+        if (!merged)
+            return pieces;
+        var boxes = new Dictionary<int, Rect>();
+        var order = new List<int>();
+        for (var i = 0; i < pieces.Count; i++)
+        {
+            var root = Find(i);
+            if (!boxes.TryGetValue(root, out var box))
+            {
+                boxes[root] = pieces[i];
+                order.Add(root);
+                continue;
+            }
+
+            var p = pieces[i];
+            var left = Math.Min(box.X, p.X);
+            var top = Math.Min(box.Y, p.Y);
+            var right = Math.Max(box.X + box.Width, p.X + p.Width);
+            var bottom = Math.Max(box.Y + box.Height, p.Y + p.Height);
+            boxes[root] = new Rect(left, top, right - left, bottom - top);
+        }
+
+        var result = new List<Rect>(order.Count);
+        foreach (var root in order)
+            result.Add(boxes[root]);
+        return result;
     }
 
     private void ClearTallShapes(int count, int tallCount)

@@ -15,6 +15,10 @@ public sealed partial class ScanWorker
         _templateWhy = null;
         _templateDistLh = _templateReachLh = double.NaN;
         _templateMoved = false;
+        _templateClipped = false;
+        _checkBackground = _stats is not null || Trace is { Enabled: true }
+            ? PlateBackground.Measure(region.Image, marker.Line.X - region.Region.X, marker.Line.Y - region.Region.Y, marker.Line.Width, marker.Line.Height)
+            : null;
         _checkTries = _failOwnName = _failOtherPlate = _failOther = 0;
         var fresh = marker.LineMs >= frameMs;
         var (ppx, ppy, predictedMargin, _) = marker.Predict(frameMs, _predict);
@@ -178,12 +182,14 @@ public sealed partial class ScanWorker
     private void TraceCheck(
         MarkerRecord marker, double frameMs, double px, double py, double margin, PixelRect? read, PixelRect? moved, bool tracked, bool kept, bool verified, int fails, int lost)
     {
+        if (_checkBackground is { } bg)
+            _stats?.AddBandCheck(PlateBackground.BandOf(bg), fails == 0);
         if (Trace.Line(_clock.NowMs, "scn", "check") is not { } t)
             return;
         t.Int("seq", _frameSeq).Num("fms", frameMs).Int("mid", marker.Id).Str("st", marker.Status.ToString()).Box("line", marker.Line).Num("lastFound", marker.LastFoundMs)
             .Num("px", px).Num("py", py).Num("margin", margin).Bool("tracked", tracked).Bool("read", read is not null).Bool("kept", kept).Bool("verified", verified)
             .Bool("following", _keep.TryGetValue(marker.Id, out var keep) && keep.Following).Num("tplScore", _templateScore, 3).Str("tplWhy", _templateWhy)
-            .Num("tplDistLh", _templateDistLh, 2).Num("tplReachLh", _templateReachLh, 2).Bool("tplMove", _templateMoved)
+            .Num("tplDistLh", _templateDistLh, 2).Num("tplReachLh", _templateReachLh, 2).Bool("tplMove", _templateMoved).Bool("tplClip", _templateClipped).Num("bg", _checkBackground ?? double.NaN, 0)
             .Int("tries", _checkTries).Int("failOwnName", _failOwnName).Int("failOtherPlate", _failOtherPlate).Int("failOther", _failOther)
             .Int("fails", fails).Int("noTrack", lost);
         if (read is { } r)

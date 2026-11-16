@@ -89,7 +89,14 @@ public sealed partial class MarkerIndex
             {
                 var index = Find(id);
                 if (index >= 0 && _records[index].LastFoundMs < update.FrameMs)
-                    _records[index] = _records[index] with { MissedFrames = _records[index].MissedFrames + 1 };
+                {
+                    var record = _records[index];
+                    _records[index] = record with
+                    {
+                        MissedFrames = record.MissedFrames + 1,
+                        MissKnownMs = double.IsNaN(record.MissKnownMs) ? nowMs : record.MissKnownMs,
+                    };
+                }
             }
         }
 

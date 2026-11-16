@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using Iris.Core.Detection;
 
 namespace Iris.Core.Pipeline;
 
@@ -12,7 +13,7 @@ public sealed partial class MarkerIndex
     private readonly List<CaptureRequest> _requests = new();
     private readonly List<SessionMemoryEntry> _session = new();
     private readonly List<MarkerRecord> _recentlyEnded = new();
-    private readonly object _subscriberGate = new();
+    private readonly Lock _subscriberGate = new();
     private IndexSubscription[] _subscribers = Array.Empty<IndexSubscription>();
     private IndexSnapshot _current = IndexSnapshot.Empty;
     private int _epoch;
@@ -20,8 +21,6 @@ public sealed partial class MarkerIndex
     private long _nextRequestId = 1;
     private long _version;
     private double _newFrameMs = double.NegativeInfinity;
-    private double _nameConfirmedMs = double.NegativeInfinity;
-    private double _settingsChangedMs = double.NegativeInfinity;
     private double _trackedFrameMs = double.NegativeInfinity;
     private double _prevTrackedFrameMs = double.NaN;
     private double _medianFrameIntervalMs = double.NaN;
@@ -87,6 +86,7 @@ public sealed partial class MarkerIndex
 
         foreach (var update in updates)
             fired |= ApplyOne(update, nowMs);
+        EndLostDuplicates();
         ExpireRequests(nowMs);
         _recentlyEnded.RemoveAll(m => nowMs - m.LastFoundMs > Math.Max(_settings.PanelStaleMs, _settings.PanelKeepMaxMs));
         _version++;
@@ -118,8 +118,6 @@ public sealed partial class MarkerIndex
         SessionMemory = _session.ToArray(),
         RecentlyEnded = _recentlyEnded.ToArray(),
         NewFrameMs = _newFrameMs,
-        NameConfirmedMs = _nameConfirmedMs,
-        SettingsChangedMs = _settingsChangedMs,
         TrackedFrameMs = _trackedFrameMs,
         PrevTrackedFrameMs = _prevTrackedFrameMs,
         MedianFrameIntervalMs = _medianFrameIntervalMs,
@@ -171,6 +169,9 @@ public sealed partial class MarkerIndex
             case IdentityUpdate identity:
                 ApplyIdentity(identity, nowMs);
                 return IndexTrigger.None;
+            case RemeasureUpdate remeasure:
+                ApplyRemeasure(remeasure, nowMs);
+                return IndexTrigger.None;
             case UnconfirmUpdate unconfirm:
                 ApplyUnconfirm(unconfirm, nowMs);
                 return IndexTrigger.None;
@@ -207,7 +208,6 @@ public sealed partial class MarkerIndex
                 _boundary = settings.Boundary;
                 _windowWidth = settings.WindowWidth;
                 _windowHeight = settings.WindowHeight;
-                _settingsChangedMs = Math.Max(_settingsChangedMs, settings.FrameMs);
                 return IndexTrigger.SettingsChanged;
             default:
                 return IndexTrigger.None;
@@ -328,17 +328,24 @@ public sealed partial class MarkerIndex
         if (index < 0)
             return;
         var record = _records[index];
-        if (update.FrameMs < record.LineMs)
+        var lineRejected = update.FrameMs < record.LineMs;
+        if (lineRejected)
             Reject(update, "Line", update.Id, update.FrameMs, record.LineMs, record.LineBy, nowMs, Distance(update.CentreX, update.Top, record.CentreX, record.Top));
         else
             record = record.WithLine(update.FrameMs, update.CentreX, update.Top, update.Width, update.DistanceWidth, update.Group);
         if (update.FrameMs < record.SamplesMs)
             Reject(update, "Samples", update.Id, update.FrameMs, record.SamplesMs, record.SamplesBy, nowMs);
         else
-            record = record.WithSamples(update.FrameMs, update.CentreX, update.Top, update.Group);
+            record = record.WithSamples(update.FrameMs, update.CentreX, update.Top, update.Group, nameChecked: update.NameChecked);
+        if (lineRejected && record.Recent.Length > 0 && record.Recent[^1].Template)
+        {
+            _records[index] = record;
+            return;
+        }
+
         if (update.FrameMs >= record.LastFoundMs)
         {
-            record = record with { MissedFrames = 0 };
+            record = record with { MissedFrames = 0, MissKnownMs = double.NaN, MovedUnseen = record.MovedUnseen && lineRejected };
             if (double.IsFinite(update.PredictionErrorPx))
                 record = record with
                 {
@@ -348,6 +355,8 @@ public sealed partial class MarkerIndex
 
         if (update.NameSeen && update.FrameMs > record.NameSeenMs)
             record = record with { NameSeenMs = update.FrameMs };
+        if (update.FrameMs >= record.HitNameEvidenceMs)
+            record = record with { HitNameEvidence = update.Evidence, HitNameEvidenceMs = update.FrameMs };
         _records[index] = record.WithFound(update.FrameMs);
     }
 
@@ -365,7 +374,9 @@ public sealed partial class MarkerIndex
         }
 
         var moved = record.WithLineBox(update.FrameMs, update.Line, update.Group);
-        _records[index] = double.IsFinite(update.DistanceWidth) ? moved with { DistanceWidth = update.DistanceWidth } : moved;
+        if (double.IsFinite(update.DistanceWidth))
+            moved = moved with { DistanceWidth = update.DistanceWidth };
+        _records[index] = record.MarkedConfirmed ? Unseen(moved) : moved;
         if (Trace.Line(nowMs, "idx", "move") is { } t)
             Trace!.Write(t.Int("mid", update.Id).Str("grp", update.Group.ToString()).Num("fms", update.FrameMs).Box("from", record.Line).Box("to", update.Line)
                 .Num("dist", Distance(record.CentreX, record.Top, update.Line.X + update.Line.Width / 2.0, update.Line.Y), 1).Num("lastFound", record.LastFoundMs).Text());
@@ -386,11 +397,14 @@ public sealed partial class MarkerIndex
         var moved = record.WithLine(update.FrameMs, update.CentreX, update.Top, record.Width, record.DistanceWidth, update.Group);
         if (update.FrameMs >= record.SamplesMs)
             moved = moved.WithSamples(update.FrameMs, update.CentreX, update.Top, update.Group, template: true);
-        _records[index] = moved;
+        _records[index] = Unseen(moved);
         if (Trace.Line(nowMs, "idx", "tplmove") is { } t)
             Trace!.Write(t.Int("mid", update.Id).Num("fms", update.FrameMs).Box("from", record.Line).Box("to", moved.Line)
                 .Num("dist", Distance(record.CentreX, record.Top, update.CentreX, update.Top), 1).Num("lastFound", record.LastFoundMs).Text());
     }
+
+    private MarkerRecord Unseen(MarkerRecord record) =>
+        record with { MovedUnseen = true, MissedFrames = Math.Max(record.MissedFrames, _settings.NameUnverifiedMaxMissed + 1) };
 
     private void ApplyStatus(StatusUpdate update, double nowMs)
     {
@@ -457,7 +471,6 @@ public sealed partial class MarkerIndex
             Post0 = null,
             Post1 = null,
         };
-        _nameConfirmedMs = Math.Max(_nameConfirmedMs, update.FrameMs);
         if (Trace.Line(nowMs, "idx", "confirm") is { } t)
             Trace!.Write(t.Int("mid", update.Id).Str("name", update.Name).Num("fms", update.FrameMs).Box("line", record.Line).Text());
         EndDuplicates(_records[index], update);
@@ -466,21 +479,61 @@ public sealed partial class MarkerIndex
 
     private void EndDuplicates(MarkerRecord confirmed, ConfirmUpdate update)
     {
+        var referenceMs = double.IsFinite(_trackedFrameMs) ? Math.Max(_trackedFrameMs, update.FrameMs) : update.FrameMs;
+        if (referenceMs - confirmed.LastFoundMs >= _settings.LostDuplicateEndMs)
+            return;
         List<int>? older = null;
+        var greenNear = false;
+        var confirmedGreen = IndexModel.PlateColourOf(confirmed) == PlateColor.Green;
         foreach (var other in _records)
         {
             if (other.Id == confirmed.Id || other.Status != PlateStatus.Confirmed || !other.MarkedConfirmed
-                || !string.Equals(other.Name, confirmed.Name, StringComparison.OrdinalIgnoreCase))
+                || !string.Equals(other.Name, confirmed.Name, StringComparison.OrdinalIgnoreCase)
+                || referenceMs - other.LastFoundMs >= _settings.LostDuplicateEndMs)
                 continue;
             var reach = _settings.DuplicateNameReachLines * Math.Max(other.Height, confirmed.Height);
-            if (Distance(other.CentreX, other.Top, confirmed.CentreX, confirmed.Top) <= reach)
-                (older ??= new List<int>()).Add(other.Id);
+            if (Distance(other.CentreX, other.Top, confirmed.CentreX, confirmed.Top) > reach)
+                continue;
+            (older ??= new List<int>()).Add(other.Id);
+            greenNear |= IndexModel.PlateColourOf(other) == PlateColor.Green;
         }
 
         if (older is null)
             return;
+        if (!confirmedGreen && greenNear)
+        {
+            ApplyEnd(new EndUpdate(update.Group, update.FrameMs, _epoch, confirmed.Id, EndReason.Duplicate));
+            return;
+        }
+
         foreach (var id in older)
             ApplyEnd(new EndUpdate(update.Group, update.FrameMs, _epoch, id, EndReason.Duplicate));
+    }
+
+    private void EndLostDuplicates()
+    {
+        if (!double.IsFinite(_trackedFrameMs))
+            return;
+        List<int>? ended = null;
+        foreach (var lost in _records)
+        {
+            if (lost.Status != PlateStatus.Confirmed || lost.Name is null || _trackedFrameMs - lost.LastFoundMs < _settings.LostDuplicateEndMs)
+                continue;
+            foreach (var live in _records)
+            {
+                if (live.Id != lost.Id && live.Status == PlateStatus.Confirmed && live.LastFoundMs > lost.LastFoundMs
+                    && _trackedFrameMs - live.LastFoundMs < _settings.LostDuplicateEndMs && string.Equals(live.Name, lost.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    (ended ??= new List<int>()).Add(lost.Id);
+                    break;
+                }
+            }
+        }
+
+        if (ended is null)
+            return;
+        foreach (var id in ended)
+            ApplyEnd(new EndUpdate(PipelineGroup.Index, _trackedFrameMs, _epoch, id, EndReason.LostDuplicate));
     }
 
     private void ApplyIdentity(IdentityUpdate update, double nowMs)
@@ -496,6 +549,33 @@ public sealed partial class MarkerIndex
         }
 
         _records[index] = record with { Identity = update.Identity, IdentityMs = update.FrameMs, IdentityBy = update.Group };
+    }
+
+    private void ApplyRemeasure(RemeasureUpdate update, double nowMs)
+    {
+        var index = Find(update.Id);
+        if (index < 0)
+            return;
+        var record = _records[index];
+        if (record.Status != PlateStatus.Confirmed || !record.MarkedConfirmed || !string.Equals(record.Name, update.Name, StringComparison.OrdinalIgnoreCase))
+            return;
+        if (update.FrameMs < record.OffsetMs)
+        {
+            Reject(update, "Offset", update.Id, update.FrameMs, record.OffsetMs, record.OffsetBy, nowMs);
+            return;
+        }
+
+        _records[index] = record with
+        {
+            NameRel = update.NameRel,
+            PlateRel = update.PlateRel,
+            OffsetMs = update.FrameMs,
+            OffsetBy = update.Group,
+            NameLine = update.NameLine ?? record.NameLine,
+        };
+        if (Trace.Line(nowMs, "idx", "remeasure") is { } t)
+            Trace!.Write(t.Int("mid", update.Id).Num("fms", update.FrameMs).Box("from", record.NameRel ?? default).Box("nameRel", update.NameRel).Box("plateRel", update.PlateRel)
+                .Bool("nameLine", update.NameLine is not null).Text());
     }
 
     private void ApplyUnconfirm(UnconfirmUpdate update, double nowMs)

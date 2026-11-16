@@ -11,9 +11,15 @@ public sealed class WhiteDuplicateRule
     }
 
     private readonly Dictionary<int, Sighting> _plates = new();
-    private readonly int _window;
+    private int _window;
 
     public WhiteDuplicateRule(int windowTicks) => _window = windowTicks;
+
+    public int WindowTicks
+    {
+        get => _window;
+        set => _window = Math.Max(1, value);
+    }
 
     public void Forget(int plateId) => _plates.Remove(plateId);
 

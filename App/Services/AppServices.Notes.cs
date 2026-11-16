@@ -10,9 +10,10 @@ namespace Iris.App.Services;
 public sealed partial class AppServices
 {
     private readonly SemaphoreSlim _notesSave = new(1, 1);
-    private readonly object _notesLoad = new();
+    private readonly Lock _notesLoad = new();
     private DossierNotes? _notes;
     private volatile bool _notesUnreadable;
+    private Task _lastNotesSave = Task.CompletedTask;
 
     public bool NotesUnreadable => _notesUnreadable;
 
@@ -48,7 +49,7 @@ public sealed partial class AppServices
             return Task.CompletedTask;
         var text = Notes.Serialize();
         var path = Paths.DossierNotesFile;
-        return Task.Run(async () =>
+        return _lastNotesSave = Task.Run(async () =>
         {
             await _notesSave.WaitAsync().ConfigureAwait(false);
             try
@@ -64,5 +65,28 @@ public sealed partial class AppServices
                 _notesSave.Release();
             }
         });
+    }
+
+    public void FinishNotes()
+    {
+        if (_notesFinished)
+            return;
+        _notesFinished = true;
+        WaitForNotesSave(NotesSaveWait);
+    }
+
+    private bool _notesFinished;
+
+    private static readonly TimeSpan NotesSaveWait = TimeSpan.FromSeconds(1);
+
+    private void WaitForNotesSave(TimeSpan limit)
+    {
+        try
+        {
+            _lastNotesSave.Wait(limit);
+        }
+        catch (AggregateException)
+        {
+        }
     }
 }

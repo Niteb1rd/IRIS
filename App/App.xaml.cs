@@ -11,6 +11,7 @@ using System.Windows.Threading;
 using Iris.App.Services;
 using Iris.App.Views;
 using Iris.Core.Config;
+using Iris.Core.Lookup;
 using Iris.Core.Mining;
 using Iris.Core.Updates;
 
@@ -25,6 +26,7 @@ public partial class App : Application
     private TrayIcon? _tray;
     private ConfigWindow? _configWindow;
     private ImportCoordinator? _imports;
+    private DispatcherTimer? _updateWait;
     private CacheUpdater? _updater;
     private HostedConfigAutoChecker? _hostedChecker;
     private UpdateNotifier? _updateNotifier;
@@ -78,6 +80,8 @@ public partial class App : Application
         var services = AppServices.Create(AppContext.BaseDirectory);
         _services = services;
 
+        Iris.App.Views.PopupDrawing.DrawLayeredOnCpu();
+
         void ApplyTheme() => AppTheme.Apply(services.Settings.SettingsDarkMode, text => services.Log.Write(services.Clock.UtcNow, text));
         ApplyTheme();
         services.SettingsApplied += (_, _) => ApplyTheme();
@@ -102,7 +106,7 @@ public partial class App : Application
         var overlay = new OverlayController(services, imports);
         _overlay = overlay;
         overlay.Start();
-        _interactive = new InteractiveOverlay(services, overlay, () => _configWindow);
+        _interactive = new InteractiveOverlay(services, overlay, () => _configWindow, () => imports.IsBusy);
 
         void RequestBorderlessCapture()
         {
@@ -197,11 +201,14 @@ public partial class App : Application
 
     private void ReleaseAll()
     {
+        _updateWait?.Stop();
+        _updateWait = null;
         _hostedChecker?.Dispose();
         _hostedChecker = null;
         _updateNotifier?.Dispose();
         _updateNotifier = null;
         _live?.Dispose();
+        var servicesFree = _live?.AllThreadsEnded ?? true;
         _live = null;
         _interactive?.Dispose();
         _interactive = null;
@@ -209,7 +216,9 @@ public partial class App : Application
         _overlay = null;
         _tray?.Dispose();
         _tray = null;
-        _services?.Dispose();
+        _services?.FinishNotes();
+        if (servicesFree)
+            _services?.Dispose();
         _services = null;
 
         if (_mutex is not null)
@@ -280,7 +289,7 @@ public partial class App : Application
             }
             catch (Win32Exception)
             {
-                Process.Start(new ProcessStartInfo("notepad.exe", "\"" + path + "\"") { UseShellExecute = true });
+                Process.Start(new ProcessStartInfo(WindowsTools.Notepad) { UseShellExecute = false, ArgumentList = { path } });
             }
         }
         catch (Exception ex)
@@ -299,7 +308,7 @@ public partial class App : Application
         {
             var folder = services.Paths.ConfigFolder;
             Directory.CreateDirectory(folder);
-            Process.Start(new ProcessStartInfo("explorer.exe", "\"" + folder + "\"") { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(WindowsTools.Explorer) { UseShellExecute = false, ArgumentList = { folder } });
         }
         catch (Exception ex)
         {
@@ -313,6 +322,28 @@ public partial class App : Application
     {
         if (_shuttingDown || _services is null)
             return;
+        if (UpdateMustWait())
+        {
+            if (_updateWait is null)
+            {
+                _services.Log.Write(_services.Clock.UtcNow, "Update: ready; IRIS restarts once Settings, the Interactive Overlay, imports, IRIS's questions and Windows dialogs are closed");
+                _tray?.SetActivity("update ready, restarts when IRIS's windows are closed");
+                var wait = new DispatcherTimer { Interval = UpdateWaitCheck };
+                wait.Tick += (_, _) =>
+                {
+                    if (UpdateMustWait())
+                        return;
+                    wait.Stop();
+                    _updateWait = null;
+                    _tray?.SetActivity(null);
+                    ApplyUpdate(newRoot, version);
+                };
+                _updateWait = wait;
+                wait.Start();
+            }
+
+            return;
+        }
 
         var installFolder = AppContext.BaseDirectory;
         var result = UpdateInstaller.Install(newRoot, installFolder);
@@ -333,6 +364,11 @@ public partial class App : Application
         var exeName = Path.GetFileName(Environment.ProcessPath) ?? "IRIS.exe";
         Quit(restartExe: Path.Combine(installFolder, exeName));
     }
+
+    private static readonly TimeSpan UpdateWaitCheck = TimeSpan.FromSeconds(2);
+
+    private bool UpdateMustWait() =>
+        _configWindow is not null || _interactive?.IsOpen == true || _imports?.IsBusy == true || PromptDialog.IsAnyOpen || DialogHelper.IsSystemDialogOpen();
 
     private void Quit(string? restartExe)
     {
@@ -394,7 +430,7 @@ public partial class App : Application
         try
         {
             var path = services.Paths.MiningFile;
-            return File.Exists(path) && MiningTable.IsOutdated(File.ReadAllText(path));
+            return File.Exists(path) && MiningTable.IsOutdated(BoundedFile.ReadText(path, CacheSettings.ConfigMaxFileBytes));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

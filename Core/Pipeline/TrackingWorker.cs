@@ -5,7 +5,7 @@ namespace Iris.Core.Pipeline;
 
 public sealed class TrackingWorker
 {
-    private readonly PipelineSettings _settings;
+    private PipelineSettings _settings;
     private readonly ILineTracker _tracker;
     private readonly PipelineStats? _stats;
     private readonly IUpdateSink _sink;
@@ -43,6 +43,8 @@ public sealed class TrackingWorker
         _clock = clock;
         _stats = stats;
     }
+
+    public void UseRates(PipelineSettings settings) => _settings = settings;
 
     public bool Process(IndexSnapshot snapshot, CapturedFrame frame, PipelineEnvironment env)
     {
@@ -138,6 +140,9 @@ public sealed class TrackingWorker
         {
             var marker = input.Marker;
             var confirmed = marker.Status == PlateStatus.Confirmed;
+            var background = confirmed && (_stats is not null || tracing) ? Background(marker, handled[marker.Id].Region) : null;
+            if (background is { } bg)
+                _stats?.AddBandTrack(PlateBackground.BandOf(bg), assignment.Chosen.ContainsKey(marker.Id));
             attempts++;
             if (confirmed)
                 confirmedAttempts++;
@@ -146,7 +151,7 @@ public sealed class TrackingWorker
                 _matched[marker.Id] = false;
                 missed.Add(marker.Id);
                 if (tracing)
-                    TraceMarker(frame, input, handled[marker.Id].Region.Kind, crowdedBefore!, notes!, null, null, NameEvidence.None);
+                    TraceMarker(frame, input, handled[marker.Id].Region.Kind, crowdedBefore!, notes!, null, null, NameEvidence.None, background);
                 if (confirmed)
                 {
                     if (input.Lines.Count > 0)
@@ -171,11 +176,11 @@ public sealed class TrackingWorker
                 : line.Part is { } part && TrackAssigner.StoresUnionPart(marker, line, _settings) ? part.Width : line.Box.Width;
             current[marker.Id] = marker.AfterHit(frameMs, position.CentreX, position.Top, position.Width, distanceWidth);
             if (tracing)
-                TraceMarker(frame, input, region.Kind, crowdedBefore!, notes!, line, position, evidence);
+                TraceMarker(frame, input, region.Kind, crowdedBefore!, notes!, line, position, evidence, background);
             var predictedCentre = input.PredictedX + marker.Width / 2.0;
             var error = Math.Sqrt((position.CentreX - predictedCentre) * (position.CentreX - predictedCentre) + (position.Top - input.PredictedY) * (position.Top - input.PredictedY));
             var nameSeen = evidence is NameEvidence.Whole or NameEvidence.Partial or NameEvidence.Anchored;
-            updates.Add(new TrackingHitUpdate(PipelineGroup.Tracking, frameMs, epoch, marker.Id, position.CentreX, position.Top, position.Width, distanceWidth, error, nameSeen));
+            updates.Add(new TrackingHitUpdate(PipelineGroup.Tracking, frameMs, epoch, marker.Id, position.CentreX, position.Top, position.Width, distanceWidth, error, nameSeen, confirmed, evidence));
             _matched[marker.Id] = true;
             if (confirmed)
             {
@@ -326,7 +331,7 @@ public sealed class TrackingWorker
 
     private void TraceMarker(
         CapturedFrame frame, MarkerCandidates input, RequestKind regionKind, HashSet<int> crowdedBefore, Dictionary<int, List<TrackCandidateNote>> notes,
-        FoundLine? line, LinePosition? position, NameEvidence evidence)
+        FoundLine? line, LinePosition? position, NameEvidence evidence, int? background)
     {
         if (Trace.Line(_clock.NowMs, "trk", "mk") is not { } t)
             return;
@@ -337,7 +342,7 @@ public sealed class TrackingWorker
             .Box("line", m.Line).Num("lineMs", m.LineMs).Num("lastFound", m.LastFoundMs)
             .Num("px", input.PredictedX).Num("py", input.PredictedY).Num("margin", input.Margin).Num("vx", vx, 4).Num("vy", vy, 4)
             .Box("patch", input.Patch).Int("lines", input.Lines.Count).Num("err", m.PredictionErrorPx, 1).Int("missed", m.MissedFrames)
-            .Str("nameEv", evidence.ToString()).Num("nameSeen", m.NameSeenMs);
+            .Str("nameEv", evidence.ToString()).Num("nameSeen", m.NameSeenMs).Num("bg", background ?? double.NaN, 0);
         t.Array("cands");
         if (notes.TryGetValue(m.Id, out var list))
         {
@@ -372,6 +377,9 @@ public sealed class TrackingWorker
         var offset = line.Box.X + line.Box.Width / 2.0 - (found.X + found.Width / 2.0);
         return new LinePosition(fix.CentreX + offset, fix.Top, line.Box.Width);
     }
+
+    private static int? Background(MarkerRecord marker, FrameRegion region) =>
+        PlateBackground.Measure(region.Image, marker.Line.X - region.Region.X, marker.Line.Y - region.Region.Y, marker.Line.Width, marker.Line.Height);
 
     private static bool IsTrackingRegion(FrameRegion region) => region.Kind == RequestKind.TrackingRegion || region.Kind == RequestKind.FirstRegion;
 

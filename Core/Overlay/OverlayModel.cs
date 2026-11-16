@@ -16,7 +16,7 @@ public sealed class OverlayModel
     public static readonly OverlayModel Empty = new(Array.Empty<BracketItem>(), Array.Empty<PanelEntry>());
 
     public OverlayModel(IReadOnlyList<BracketItem> brackets, IReadOnlyList<PanelEntry> panel, PixelRect? boundary = null, string? note = null, MiningLabelItem? mining = null,
-        PixelRect? dossier = null)
+        PixelRect? dossier = null, PixelRect? dossierList = null)
     {
         Brackets = brackets;
         Panel = panel;
@@ -24,6 +24,7 @@ public sealed class OverlayModel
         Note = note;
         Mining = mining;
         Dossier = dossier;
+        DossierList = dossierList;
     }
 
     public PixelRect? Boundary { get; }
@@ -38,5 +39,7 @@ public sealed class OverlayModel
 
     public PixelRect? Dossier { get; }
 
-    public bool IsEmpty => Brackets.Count == 0 && Panel.Count == 0 && Note is null && Mining is null && Dossier is null;
+    public PixelRect? DossierList { get; }
+
+    public bool IsEmpty => Brackets.Count == 0 && Panel.Count == 0 && Note is null && Mining is null && Dossier is null && DossierList is null;
 }

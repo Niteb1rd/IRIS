@@ -12,15 +12,13 @@ public sealed class DossierNotes
     public const long DefaultMaxFileBytes = 20L * 1024 * 1024;
     public const int FormatVersion = 1;
 
-    public const int UniverseYearOffset = 930;
-
     private const string Header = "# IRIS dossier notes";
     private const string HandleTag = "@handle ";
     private const string CitizenTag = "@citizen ";
     private const string UpdatedTag = "@updated ";
     private const char LinePrefix = '>';
 
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<DossierNote> _notes = new();
     private readonly long _maxFileBytes;
 
@@ -41,7 +39,7 @@ public sealed class DossierNotes
     {
         var notes = new DossierNotes(maxFileBytes);
         if (File.Exists(path))
-            notes.ReadFrom(File.ReadAllText(path, Encoding.UTF8));
+            notes.ReadFrom(BoundedFile.ReadText(path, maxFileBytes));
         return notes;
     }
 
@@ -160,7 +158,7 @@ public sealed class DossierNotes
         }
     }
 
-    public (DossierNote? Note, bool Changed) Link(string handle, string? citizenRecord, DateTimeOffset localNow)
+    public (DossierNote? Note, bool Changed) Link(string handle, string? citizenRecord, DateTimeOffset localNow, DateFormat format)
     {
         lock (_gate)
         {
@@ -171,7 +169,7 @@ public sealed class DossierNotes
             var note = _notes[index];
             if (record is not null && !string.Equals(note.Handle, handle, StringComparison.OrdinalIgnoreCase))
             {
-                var line = $"Handle name changed from {note.Handle} to {handle} seen on {UniverseTime(localNow)}.";
+                var line = $"Handle name changed from {note.Handle} to {handle} seen on {DateText.Stamp(localNow, format)}.";
                 note = note with { Handle = handle, Text = note.Text + "\n" + line, Updated = localNow.ToUniversalTime() };
                 _notes[index] = note;
                 return (note, true);
@@ -234,9 +232,6 @@ public sealed class DossierNotes
         }
         return sb.ToString();
     }
-
-    public static string UniverseTime(DateTimeOffset localNow) =>
-        localNow.AddYears(UniverseYearOffset).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
 
     private static bool IsRecord(string? text) => text is { Length: > 0 } && text.All(char.IsAsciiDigit);
 

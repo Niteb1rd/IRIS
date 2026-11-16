@@ -4,7 +4,7 @@ namespace Iris.Core.Pipeline;
 
 public sealed class StoppedWorker
 {
-    private readonly PipelineSettings _settings;
+    private PipelineSettings _settings;
     private readonly ILineTracker _tracker;
     private readonly IUpdateSink _sink;
     private readonly IMonotonicClock _clock;
@@ -20,6 +20,8 @@ public sealed class StoppedWorker
         _sink = sink;
         _clock = clock;
     }
+
+    public void UseRates(PipelineSettings settings) => _settings = settings;
 
     public bool Offer(double frameMs) => _schedule.Offer(frameMs, (int)Math.Round(_settings.StoppedTrackHz));
 
@@ -74,7 +76,7 @@ public sealed class StoppedWorker
                     var distanceWidth = wholeFromPart ? line.Width : speed && line.Width > stored + gate ? stored : double.NaN;
                     var centre = line.X + lineWidth / 2.0;
                     record = marker.AfterHit(frameMs, centre, line.Y, lineWidth, distanceWidth);
-                    updates.Add(new TrackingHitUpdate(PipelineGroup.Stopped, frameMs, epoch, marker.Id, centre, line.Y, lineWidth, distanceWidth));
+                    updates.Add(new TrackingHitUpdate(PipelineGroup.Stopped, frameMs, epoch, marker.Id, centre, line.Y, lineWidth, distanceWidth, NameChecked: false));
                     traceLine?.Box("hit", line).Num("hitCx", centre).Num("hitW", lineWidth).Bool("partial", isPartial);
                 }
             }

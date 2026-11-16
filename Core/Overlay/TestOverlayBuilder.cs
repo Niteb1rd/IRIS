@@ -78,7 +78,8 @@ public static class TestOverlayBuilder
 
         var model = OverlayModelBuilder.Build(detections, shown, Lookup);
         return part == TestOverlayPart.Panel
-            ? new OverlayModel(Array.Empty<BracketItem>(), model.Panel, dossier: DossierBox(settings, screenWidth, screenHeight))
+            ? new OverlayModel(Array.Empty<BracketItem>(), model.Panel, dossier: DossierBox(settings, screenWidth, screenHeight),
+                dossierList: ListBox(settings, screenWidth, screenHeight))
             : new OverlayModel(model.Brackets, Array.Empty<PanelEntry>(), area.ToPixels(screenWidth, screenHeight));
     }
 
@@ -88,6 +89,14 @@ public static class TestOverlayBuilder
             return null;
         var place = DossierText.PlaceFor(settings, screenWidth, screenHeight);
         return place.IsEmpty ? null : new PixelRect(place.Left, place.Top, place.Width, place.Bottom - place.Top);
+    }
+
+    private static PixelRect? ListBox(AppSettings? settings, double screenWidth, double screenHeight)
+    {
+        if (settings is null)
+            return null;
+        var (left, top, width, bottom) = DossierText.PanelArea(settings, screenWidth, screenHeight);
+        return width <= 0 || bottom <= top ? null : new PixelRect(left, top, width, bottom - top);
     }
 
     private static IReadOnlyList<OrgMembership> OrgsFor(OrgAttributeRule rule, string sid, string name) => rule.Kind switch

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using AngleSharp.Dom;
 
@@ -14,6 +15,9 @@ public static class ProfilePageParser
     private const string InfoEntrySelector = ".profile .info .entry";
     private const string LabelSelector = ".label";
     private const string ValueSelector = ".value";
+    private const string LeftEntrySelector = ".left-col .entry";
+    private const string EnlistedLabel = "Enlisted";
+    private static readonly string[] EnlistedFormats = { "MMM d, yyyy", "MMM dd, yyyy", "MMMM d, yyyy", "MMMM dd, yyyy" };
 
     private static readonly Regex RecordPattern = new(@"^#\s*(\d+)$", RegexOptions.CultureInvariant);
 
@@ -47,7 +51,23 @@ public static class ProfilePageParser
             }
         }
 
-        return RsiResult<PlayerProfile>.Found(new PlayerProfile(requestedHandle, moniker, record, hasLabel));
+        var (enlisted, unreadable) = Enlisted(doc);
+        return RsiResult<PlayerProfile>.Found(new PlayerProfile(requestedHandle, moniker, record, hasLabel, enlisted, unreadable));
+    }
+
+    private static (DateOnly? Date, bool Unreadable) Enlisted(IDocument doc)
+    {
+        foreach (var entry in doc.QuerySelectorAll(LeftEntrySelector))
+        {
+            if (entry.QuerySelector(LabelSelector) is not { } label
+                || !string.Equals(HtmlText.Of(label), EnlistedLabel, StringComparison.OrdinalIgnoreCase)
+                || entry.QuerySelector(ValueSelector) is not { } value)
+                continue;
+            return DateOnly.TryParseExact(HtmlText.Of(value), EnlistedFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
+                ? (date, false)
+                : (null, true);
+        }
+        return (null, false);
     }
 
     public static string Shown(string? record) => record is { Length: > 0 } digits ? digits : NoCitizenRecord;

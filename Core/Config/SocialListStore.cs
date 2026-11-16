@@ -1,4 +1,4 @@
-using System.Text;
+using Iris.Core.Lookup;
 
 namespace Iris.Core.Config;
 
@@ -57,7 +57,7 @@ public static class SocialListStore
         string text;
         try
         {
-            text = File.ReadAllText(path, Encoding.UTF8);
+            text = BoundedFile.ReadText(path, CacheSettings.ConfigMaxFileBytes);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -69,6 +69,8 @@ public static class SocialListStore
         return new SocialListLoadResult(SocialConfigToml.Read(text), isNew: false);
     }
 
+    public static bool IsTooLarge(string text) => System.Text.Encoding.UTF8.GetByteCount(text) > CacheSettings.ConfigMaxFileBytes;
+
     public static SaveResult Save(string path, SocialConfig config, WatchedFile? watched = null)
     {
         var text = SocialConfigToml.Write(config);
@@ -76,6 +78,8 @@ public static class SocialListStore
         var check = SocialConfigToml.Read(text);
         if (!check.IsValid)
             return SaveResult.Failed("The list is not valid and was not saved: " + string.Join(" ", check.Errors));
+        if (IsTooLarge(text))
+            return SaveResult.Failed("The list would be larger than 1 MB, which IRIS does not read, so it was not saved.");
 
         try
         {

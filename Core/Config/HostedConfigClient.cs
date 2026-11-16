@@ -53,7 +53,7 @@ public sealed class HostedConfigClient
         var problem = HostedConfigUrl.Check(url);
         if (problem is not null)
         {
-            Log($"hosted config: address refused ({problem}): {Display(url ?? string.Empty)}");
+            Log($"hosted config: address refused ({problem}): {ForLog(url ?? string.Empty)}");
             return HostedConfigResult.Failed(url ?? string.Empty, problem);
         }
 
@@ -83,7 +83,7 @@ public sealed class HostedConfigClient
                         return Fail(uri, "The URL redirects without saying where to.", stopwatch.Elapsed);
 
                     var next = location.IsAbsoluteUri && !location.IsFile ? location : new Uri(uri, location.OriginalString);
-                    LogRequest($"GET {Display(uri)} -> redirect (HTTP {code}) to {Display(next)} ({RsiClient.FormatDuration(stopwatch.Elapsed)})");
+                    LogRequest($"GET {ForLog(uri)} -> redirect (HTTP {code}) to {ForLog(next)} ({RsiClient.FormatDuration(stopwatch.Elapsed)})");
                     if (!string.Equals(next.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
                         return Fail(uri, "The URL redirects to an address that is not https; only https:// is allowed.", stopwatch.Elapsed);
                     if (!string.Equals(next.Host, startHost, StringComparison.OrdinalIgnoreCase) || next.Port != startPort)
@@ -116,12 +116,12 @@ public sealed class HostedConfigClient
 
                 var bytes = body.ToArray();
                 var hash = Sha256Hex(bytes);
-                LogRequest($"GET {Display(uri)} -> ok (HTTP {code}, {bytes.Length} bytes, sha256 {hash.Substring(0, 12)}...) ({RsiClient.FormatDuration(stopwatch.Elapsed)})");
+                LogRequest($"GET {ForLog(uri)} -> ok (HTTP {code}, {bytes.Length} bytes, sha256 {hash.Substring(0, 12)}...) ({RsiClient.FormatDuration(stopwatch.Elapsed)})");
                 return HostedConfigResult.Ok(Display(uri), ConfigImporter.DecodeUtf8(bytes), hash);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                LogRequest($"GET {Display(uri)} -> cancelled ({RsiClient.FormatDuration(stopwatch.Elapsed)})");
+                LogRequest($"GET {ForLog(uri)} -> cancelled ({RsiClient.FormatDuration(stopwatch.Elapsed)})");
                 throw;
             }
             catch (OperationCanceledException)
@@ -149,21 +149,34 @@ public sealed class HostedConfigClient
 
     private HostedConfigResult Fail(Uri uri, string error, TimeSpan? elapsed = null)
     {
-        Log($"GET {Display(uri)} -> error: {error}" + (elapsed is { } took ? $" ({RsiClient.FormatDuration(took)})" : string.Empty));
+        Log($"GET {ForLog(uri)} -> error: {error}" + (elapsed is { } took ? $" ({RsiClient.FormatDuration(took)})" : string.Empty));
         return HostedConfigResult.Failed(Display(uri), error);
     }
 
-    private static string Display(string text)
+    public static string ForLog(string text)
     {
         try
         {
             if (Uri.TryCreate(text.Trim(), UriKind.Absolute, out var parsed))
-                return Display(parsed);
+                return ForLog(parsed);
         }
         catch (Exception ex) when (ex is UriFormatException or ArgumentException or InvalidOperationException)
         {
         }
         return text;
+    }
+
+    public static string ForLog(Uri uri)
+    {
+        try
+        {
+            var left = uri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped);
+            return uri.Query.Length > 1 || uri.Fragment.Length > 1 ? left + "?..." : left;
+        }
+        catch (Exception ex) when (ex is UriFormatException or ArgumentException or InvalidOperationException)
+        {
+            return uri.Scheme + "://" + uri.Host + "/...";
+        }
     }
 
     private static string Display(Uri uri)

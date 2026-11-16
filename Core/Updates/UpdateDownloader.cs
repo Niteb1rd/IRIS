@@ -25,6 +25,10 @@ public sealed class UpdateDownloader
         _log = log ?? NullLog.Instance;
     }
 
+    public TimeSpan TotalTimeout { get; init; } = CacheSettings.UpdateDownloadTimeout;
+
+    public TimeSpan StallTimeout { get; init; } = CacheSettings.UpdateDownloadStallTimeout;
+
     public static HttpClient CreateHttpClient() =>
         new(new HttpClientHandler { AllowAutoRedirect = false, AutomaticDecompression = DecompressionMethods.None }) { Timeout = CacheSettings.UpdateDownloadTimeout };
 
@@ -45,6 +49,9 @@ public sealed class UpdateDownloader
 
         var stopwatch = Stopwatch.StartNew();
         var partPath = targetPath + ".part";
+        using var total = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        total.CancelAfter(TotalTimeout);
+        using var stall = CancellationTokenSource.CreateLinkedTokenSource(total.Token);
         try
         {
             var uri = release.DownloadUri;
@@ -56,7 +63,7 @@ public sealed class UpdateDownloader
                 using var request = new HttpRequestMessage(HttpMethod.Get, uri);
                 request.Headers.TryAddWithoutValidation("User-Agent", userAgent);
                 request.Headers.TryAddWithoutValidation("Accept", "application/octet-stream");
-                using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, total.Token).ConfigureAwait(false);
                 int code = (int)response.StatusCode;
 
                 if (code is >= 300 and <= 399)
@@ -83,16 +90,16 @@ public sealed class UpdateDownloader
                 await using (var file = new FileStream(partPath, FileMode.Create, FileAccess.Write, FileShare.None))
                 using (var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
                 {
-                    await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                    await using var stream = await response.Content.ReadAsStreamAsync(total.Token).ConfigureAwait(false);
                     var chunk = new byte[81920];
                     int read;
-                    while ((read = await stream.ReadAsync(chunk.AsMemory(), ct).ConfigureAwait(false)) > 0)
+                    while (StartStallClock(stall) && (read = await stream.ReadAsync(chunk.AsMemory(), stall.Token).ConfigureAwait(false)) > 0)
                     {
                         length += read;
                         if (length > CacheSettings.UpdateDownloadMaxBytes)
                             break;
                         sha.AppendData(chunk, 0, read);
-                        await file.WriteAsync(chunk.AsMemory(0, read), ct).ConfigureAwait(false);
+                        await file.WriteAsync(chunk.AsMemory(0, read), total.Token).ConfigureAwait(false);
                     }
                     if (length <= CacheSettings.UpdateDownloadMaxBytes)
                         hash = Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant();
@@ -113,14 +120,24 @@ public sealed class UpdateDownloader
             TryDelete(partPath);
             throw;
         }
+        catch (OperationCanceledException) when (!total.IsCancellationRequested && stall.IsCancellationRequested)
+        {
+            return FailAndDelete(partPath, $"no data for {StallTimeout.TotalSeconds:0} seconds", stopwatch.Elapsed);
+        }
         catch (OperationCanceledException)
         {
-            return FailAndDelete(partPath, $"no answer within {CacheSettings.UpdateDownloadTimeout.TotalMinutes:0} minutes", stopwatch.Elapsed);
+            return FailAndDelete(partPath, $"no answer within {TotalTimeout.TotalMinutes:0} minutes", stopwatch.Elapsed);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException)
         {
             return FailAndDelete(partPath, ex.Message, stopwatch.Elapsed);
         }
+    }
+
+    private bool StartStallClock(CancellationTokenSource stall)
+    {
+        stall.CancelAfter(StallTimeout);
+        return true;
     }
 
     private UpdateDownloadResult FailAndDelete(string partPath, string error, TimeSpan elapsed)

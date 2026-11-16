@@ -8,6 +8,7 @@ namespace Iris.App.Services;
 internal static class NativeMethods
 {
     public const int GwlStyle = -16;
+    public const int GwlExStyle = -20;
 
     public const long WsExTransparent = 0x00000020L;
     public const long WsExToolWindow = 0x00000080L;
@@ -69,6 +70,24 @@ internal static class NativeMethods
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int index, IntPtr value);
+
+    public static void MakeNoActivate(IntPtr hwnd)
+    {
+        var style = GetWindowLongPtr(hwnd, GwlExStyle).ToInt64();
+        SetWindowLongPtr(hwnd, GwlExStyle, new IntPtr(style | WsExNoActivate));
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct DwmMargins
+    {
+        public int Left, Right, Top, Bottom;
+    }
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmExtendFrameIntoClientArea(IntPtr hWnd, ref DwmMargins margins);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

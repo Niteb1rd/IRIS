@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
@@ -13,7 +14,7 @@ public static class ColourMenus
 {
     public static ContextMenu ForPlayer(IInteractiveHost host, string handle, Action changed)
     {
-        var menu = new ContextMenu();
+        var menu = NewMenu();
         menu.Items.Add(Caption("Assign Color"));
         foreach (var color in Enum.GetValues<OverlayColor>())
             menu.Items.Add(ColourItem(color, () => Apply(host, c => SocialListEdits.SetPlayerColor(c, handle, color), changed)));
@@ -59,7 +60,7 @@ public static class ColourMenus
 
     private static ContextMenu Build(string tab, OverlayColor? rowColor, IReadOnlyList<OverlayColor>? ranking, Action<OverlayColor> setColor, Action<int> setRank, Action? remove)
     {
-        var menu = new ContextMenu();
+        var menu = NewMenu();
         if (rowColor is not { } current)
         {
             menu.Items.Add(Caption(tab + " Color"));
@@ -93,6 +94,53 @@ public static class ColourMenus
             menu.Items.Add(Item("Remove Color", rowColor is not null, remove));
         }
         return menu;
+    }
+
+    private static readonly Uri LookUri = new("/IRIS;component/Views/IoMenus.xaml", UriKind.Relative);
+    private static ResourceDictionary? s_look;
+    private static bool s_lookTried;
+    private static string? s_lookProblem;
+
+    public static string? LoadLook()
+    {
+        Look();
+        var problem = s_lookProblem;
+        s_lookProblem = null;
+        return problem;
+    }
+
+    private static ContextMenu NewMenu()
+    {
+        var menu = new ContextMenu();
+        if (Look() is { } look && look["IoMenu.Menu"] is Style style)
+        {
+            menu.Resources.MergedDictionaries.Add(look);
+            menu.Style = style;
+        }
+        return menu;
+    }
+
+    private static ResourceDictionary? Look()
+    {
+        if (s_lookTried)
+            return s_look;
+        s_lookTried = true;
+        try
+        {
+            var look = new ResourceDictionary { Source = LookUri };
+            look["IoMenu.Back"] = GlassParts.MenuBrush;
+            look["IoMenu.Border"] = GlassParts.MenuBorderBrush;
+            look["IoMenu.Highlight"] = GlassParts.MenuHighlightBrush;
+            look["IoMenu.Text"] = GlassParts.TextBrush;
+            look["IoMenu.Disabled"] = GlassParts.SecondaryBrush;
+            s_look = look;
+        }
+        catch (Exception ex)
+        {
+            s_look = null;
+            s_lookProblem = ex.Message;
+        }
+        return s_look;
     }
 
     private static void Apply(IInteractiveHost host, Func<SocialConfig, SocialConfig> change, Action changed)

@@ -11,9 +11,9 @@ public sealed class WatchedFile
     private readonly IClock _clock;
     private readonly ILog _log;
 
-    private readonly object _lastGoodGate = new();
+    private readonly Lock _lastGoodGate = new();
 
-    private readonly object _hashGate = new();
+    private readonly Lock _hashGate = new();
     private string? _appliedHash;
     private string? _ownWriteHash;
 
@@ -77,7 +77,7 @@ public sealed class WatchedFile
         {
             try
             {
-                if (File.Exists(LastGoodPath) && string.Equals(File.ReadAllText(LastGoodPath, Utf8NoBom), text, StringComparison.Ordinal))
+                if (File.Exists(LastGoodPath) && new FileInfo(LastGoodPath).Length <= Detector.MaxBytes && string.Equals(File.ReadAllText(LastGoodPath, Utf8NoBom), text, StringComparison.Ordinal))
                     return;
                 AtomicFile.WriteText(LastGoodPath, text, keepBackup: false);
             }
@@ -94,7 +94,11 @@ public sealed class WatchedFile
         {
             if (!File.Exists(LastGoodPath))
                 return null;
-            var bytes = File.ReadAllBytes(LastGoodPath);
+            byte[] bytes;
+            using (var stream = new FileStream(LastGoodPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                bytes = BoundedFile.ReadBytes(stream, Detector.MaxBytes);
+            if (bytes.Length > Detector.MaxBytes)
+                throw new FileTooLargeException(BoundedFile.TooLargeText(Detector.MaxBytes));
             var written = new DateTimeOffset(File.GetLastWriteTimeUtc(LastGoodPath), TimeSpan.Zero);
             return new LastGoodCopy(ConfigImporter.DecodeUtf8(bytes), written, HostedConfigClient.Sha256Hex(bytes));
         }

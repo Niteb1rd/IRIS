@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Windows.Threading;
+using Iris.Core.Config;
 using Iris.Core.Lookup;
 using Iris.Core.Detection;
 using Iris.Core.Mining;
@@ -126,6 +127,7 @@ public sealed partial class LiveDetectionService
         MarkerTracker? tracker = null;
         TrackingWorker? worker = null;
         var height = 0;
+        var usage = CpuUsage.Normal;
         long lastSequence = 0;
         try
         {
@@ -140,11 +142,17 @@ public sealed partial class LiveDetectionService
                     var settings = NameplateDetectorSettings.Default with { RegionLeft = 0.0, RegionRight = 1.0, RegionTop = 0.0, RegionBottom = 1.0, ScaleHeight = env.WindowHeight };
                     finder = new NameplateDetector(reader, settings) { ContrastSink = _stats };
                     tracker = new MarkerTracker(_pipe, finder, env.WindowHeight);
-                    worker = new TrackingWorker(_pipe, tracker, _queue, _clock, _stats)
+                    usage = _services.Settings.CpuUsage;
+                    worker = new TrackingWorker(Rated(usage), tracker, _queue, _clock, _stats)
                     {
                         Trace = _trace, KeepCrop = AppVersion.Diagnostics ? KeepTrackingCrop : null, KeepLoss = AppVersion.Diagnostics ? KeepLossGroup : null,
                     };
                     height = env.WindowHeight;
+                }
+                else if (_services.Settings.CpuUsage != usage)
+                {
+                    usage = _services.Settings.CpuUsage;
+                    worker.UseRates(Rated(usage));
                 }
 
                 var frame = _frames.TakeNewest();
@@ -175,6 +183,7 @@ public sealed partial class LiveDetectionService
         NameplateDetector? finder = null;
         StoppedWorker? worker = null;
         var height = 0;
+        var usage = CpuUsage.Normal;
         long lastSequence = 0;
         try
         {
@@ -189,8 +198,14 @@ public sealed partial class LiveDetectionService
                     var settings = NameplateDetectorSettings.Default with { RegionLeft = 0.0, RegionRight = 1.0, RegionTop = 0.0, RegionBottom = 1.0, ScaleHeight = env.WindowHeight };
                     finder = new NameplateDetector(reader, settings) { ContrastSink = _stats };
                     var tracker = new MarkerTracker(_pipe, finder, env.WindowHeight);
-                    worker = new StoppedWorker(_pipe, tracker, _queue, _clock) { Trace = _trace };
+                    usage = _services.Settings.CpuUsage;
+                    worker = new StoppedWorker(Rated(usage), tracker, _queue, _clock) { Trace = _trace };
                     height = env.WindowHeight;
+                }
+                else if (_services.Settings.CpuUsage != usage)
+                {
+                    usage = _services.Settings.CpuUsage;
+                    worker.UseRates(Rated(usage));
                 }
 
                 var frame = _frames.TakeNewest();
@@ -222,12 +237,14 @@ public sealed partial class LiveDetectionService
     private void ReadsLoop()
     {
         using var subscription = _index.Subscribe(IndexTrigger.NewFrame);
-        var rate = new RateClock(_pipe.PlateHz);
+        var usage = _services.Settings.CpuUsage;
+        var rate = new RateClock(Rated(usage).PlateHz);
         ReadsWorker? worker = null;
         DetectorImageOps? ops = null;
         var engineRetryAtMs = 0.0;
         var engineFailures = 0;
         string? lastEngineProblem = null;
+        var readsOwed = false;
         try
         {
             RunWorker("reads", PipelineGroup.Reads, () =>
@@ -249,7 +266,7 @@ public sealed partial class LiveDetectionService
 
                     try
                     {
-                        worker = StartReads();
+                        worker = StartReads(Rated(usage));
                         engineFailures = 0;
                         lastEngineProblem = null;
                     }
@@ -277,10 +294,15 @@ public sealed partial class LiveDetectionService
                     previous?.Dispose();
                 }
 
-                var now = _clock.NowMs;
+                if (_services.Settings.CpuUsage != usage)
+                {
+                    usage = _services.Settings.CpuUsage;
+                    worker.UseRates(Rated(usage));
+                    rate = new RateClock(Rated(usage).PlateHz);
+                }
+
                 var config = _services.CurrentConfig;
-                if (rate.TryTick(now, out _))
-                    worker.Prepare(_index.Current, env, now, config);
+                var before = _index.Current;
                 if (worker.HasPending && _frames.TakeNewestWith(PipelineGroup.Reads) is { } frame)
                 {
                     try
@@ -293,6 +315,10 @@ public sealed partial class LiveDetectionService
                         frame.Release();
                     }
                 }
+
+                var now = _clock.NowMs;
+                if (_index.Current.Epoch == before.Epoch && (rate.TryTick(now, out _) || (readsOwed && !worker.HasPending)))
+                    readsOwed = !worker.Prepare(before, env, now, config);
 
                 subscription.Wait(WaitMs(rate, _clock.NowMs));
             });
@@ -339,7 +365,8 @@ public sealed partial class LiveDetectionService
     private void ScanLoop()
     {
         using var subscription = _index.Subscribe(IndexTrigger.NewFrame);
-        var rate = new RateClock(_pipe.ScanHz);
+        var usage = _services.Settings.CpuUsage;
+        var rate = new RateClock(Rated(usage).ScanHz);
         ScanWorker? worker = null;
         DetectorImageOps? ops = null;
         TemplateMatcher? matcher = null;
@@ -361,12 +388,19 @@ public sealed partial class LiveDetectionService
                     ops = new DetectorImageOps(reader, env.Geometry, NameplateDetectorSettings.Default, _stats);
                     matcher ??= new TemplateMatcher();
                     miningReader ??= new MiningSignalReader(_mining);
-                    worker ??= new ScanWorker(_pipe, ops, matcher, _queue, _clock, _stats, DiagnosticLog, _services.Clock)
+                    worker ??= new ScanWorker(Rated(usage), ops, matcher, _queue, _clock, _stats, DiagnosticLog, _services.Clock)
                     {
                         Trace = _trace, Mining = miningReader, MiningTables = _miningTables, MiningLocked = OnMiningLocked,
                     };
                     worker.Ops = ops;
                     previous?.Dispose();
+                }
+
+                if (_services.Settings.CpuUsage != usage)
+                {
+                    usage = _services.Settings.CpuUsage;
+                    worker.UseRates(Rated(usage));
+                    rate = new RateClock(Rated(usage).ScanHz);
                 }
 
                 var now = _clock.NowMs;
@@ -458,12 +492,7 @@ public sealed partial class LiveDetectionService
         }
     }
 
-    private double MiningLockHz(IndexSnapshot snapshot)
-    {
-        var cap = TrackingCapFps();
-        var hz = cap > 0 ? cap : 1000.0 / snapshot.NominalFrameIntervalMs;
-        return Math.Max(_mining.LockHz, hz);
-    }
+    private double MiningLockHz(IndexSnapshot snapshot) => Math.Max(_mining.LockHz, 1000.0 / snapshot.NominalFrameIntervalMs);
 
     private const double MiningRateStepHz = 5.0;
 
@@ -483,11 +512,11 @@ public sealed partial class LiveDetectionService
             : $"Mining: label {(state.Label is null ? "cleared" : "\"" + state.Label + "\"")} (read {read.Text}, {read.State})");
     }
 
-    private ReadsWorker StartReads()
+    private ReadsWorker StartReads(PipelineSettings rated)
     {
         var judge = new PlateNameJudge(
             _services.Exclusions, _sessionExclusions, LookupCachedOrgs, (sid, handle) => _services.Database.IsOrgMember(sid, handle), _live);
-        return new ReadsWorker(_pipe, new NullImageOps(), judge, _sessionExclusions, _queue, _clock, _sessionNames, _stats, DiagnosticLog, _services.Clock)
+        return new ReadsWorker(rated, new NullImageOps(), judge, _sessionExclusions, _queue, _clock, _sessionNames, _stats, DiagnosticLog, _services.Clock)
         {
             Trace = _trace, KeepCrop = AppVersion.Diagnostics ? KeepReadCrop : null,
         };

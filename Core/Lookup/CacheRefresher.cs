@@ -72,9 +72,9 @@ public sealed class CacheRefresher
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
 
     private readonly HashSet<string> _staleRefreshed = new(StringComparer.OrdinalIgnoreCase);
-    private readonly object _staleLock = new();
+    private readonly Lock _staleLock = new();
 
-    private readonly object _liveLock = new();
+    private readonly Lock _liveLock = new();
     private int _liveWaiting;
     private DateTimeOffset _liveWaitingAt;
     private int _liveRunning;
@@ -250,7 +250,8 @@ public sealed class CacheRefresher
             var page = await _rsi.GetPlayerProfileAsync(handle, ct).ConfigureAwait(false);
             if (page.Status != RsiStatus.Found)
                 return null;
-            _database.SaveProfile(handle, page.Data!.Moniker, ProfilePageParser.Shown(page.Data.CitizenRecord), _clock.UtcNow);
+            _database.SaveProfile(handle, page.Data!.Moniker, ProfilePageParser.Shown(page.Data.CitizenRecord), _clock.UtcNow, page.Data.Enlisted,
+                enlistedRead: !page.Data.EnlistedUnreadable);
             return _database.GetPlayerExtra(handle);
         }
         finally

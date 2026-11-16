@@ -16,7 +16,7 @@ public sealed class LruCache<TKey, TValue> where TKey : notnull
         public DateTimeOffset LastUse { get; set; }
     }
 
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly Dictionary<TKey, LinkedListNode<Entry>> _map;
     private readonly LinkedList<Entry> _order = new();
     private readonly TimeSpan? _idle;

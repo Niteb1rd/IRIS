@@ -12,7 +12,7 @@ public sealed class FileLog : ILog
 
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly IClock _clock;
     private string? _lastError;
     private volatile bool _enabled = true;

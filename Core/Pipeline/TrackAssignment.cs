@@ -366,7 +366,7 @@ public static partial class TrackAssigner
             why = check.Skipped ? "noname" : check.ColourMismatch ? "colour" : check.Evidence == NameEvidence.Partial ? "partial" : null;
             if (check.Failed is { } gate)
             {
-                if (gate == NameGate.NotFound && FollowsWithoutName(input, line, widthChange, distance, context, settings))
+                if (gate == NameGate.NotFound && check.Reason != LostRefusalReason.OutsidePatch && FollowsWithoutName(input, line, widthChange, distance, context, settings))
                     return new Evaluation(Verdict.Valid, cost + settings.NameUnverifiedCost, distance, NameGate.NotFound, false, false, null,
                         Why: "unverified " + gate, Evidence: NameEvidence.Unverified);
                 return new Evaluation(Verdict.NameFailed, cost, distance, gate, false, false, null, check.Reason, check.Score, gate + "/" + check.Reason);

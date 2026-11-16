@@ -3,24 +3,17 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Iris.Core.Pipeline;
-using Microsoft.Win32.SafeHandles;
 using Vx = Vortice.DXGI;
 
 namespace Iris.App.Services;
 
 internal sealed partial class VBlankClock : IDisposable
 {
-    private sealed class TimerWaitHandle : WaitHandle
-    {
-        public TimerWaitHandle(IntPtr handle) => SafeWaitHandle = new SafeWaitHandle(handle, ownsHandle: true);
-    }
-
     private readonly Func<int, bool> _sleep;
     private readonly WaitHandle? _wake;
-    private TimerWaitHandle? _timer;
+    private HighResolutionTimer? _timer;
     private WaitHandle[]? _waitSet;
     private bool _timerTried;
-    private bool _periodRaised;
     private long _dwmTimerOffUntil;
     private long _lastVblankQpc;
     private uint _timingBytes = NativeMethods.DwmTimingInfoBytes;
@@ -178,25 +171,7 @@ internal sealed partial class VBlankClock : IDisposable
         var timer = _timer;
         _timer = null;
         _waitSet = null;
-        try
-        {
-            timer?.Dispose();
-        }
-        catch (Exception)
-        {
-        }
-
-        if (_periodRaised)
-        {
-            _periodRaised = false;
-            try
-            {
-                NativeMethods.TimeEndPeriod(1);
-            }
-            catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
-            {
-            }
-        }
+        timer?.Dispose();
     }
 
     private bool WaitDwmTimer()
@@ -234,14 +209,14 @@ internal sealed partial class VBlankClock : IDisposable
             var dueTicks = next - (long)(LiveSettings.VBlankLeadMs * frequency / 1000.0) - now;
             if (dueTicks > 0)
             {
-                var due = -(long)Math.Ceiling(dueTicks * 10_000_000.0 / frequency);
-                if (!NativeMethods.SetWaitableTimer(_timer!.SafeWaitHandle.DangerousGetHandle(), ref due, 0, IntPtr.Zero, IntPtr.Zero, false))
+                var timer = _timer!;
+                if (!timer.ArmIn((long)Math.Ceiling(dueTicks * 10_000_000.0 / frequency)))
                     return false;
                 var timeoutMs = (int)Math.Ceiling(dueTicks * 1000.0 / frequency) + 20;
-                var woken = _waitSet is { Length: 2 } set ? WaitHandle.WaitAny(set, timeoutMs) : WaitHandle.WaitAny(new WaitHandle[] { _timer }, timeoutMs);
+                var woken = _waitSet is { Length: 2 } set ? WaitHandle.WaitAny(set, timeoutMs) : timer.Handle.WaitOne(timeoutMs) ? 0 : WaitHandle.WaitTimeout;
                 if (woken == 1)
                 {
-                    NativeMethods.CancelWaitableTimer(_timer.SafeWaitHandle.DangerousGetHandle());
+                    timer.Cancel();
                     return true;
                 }
             }
@@ -263,17 +238,10 @@ internal sealed partial class VBlankClock : IDisposable
         if (_timerTried || Marshal.SizeOf<NativeMethods.DwmTimingInfo>() != NativeMethods.DwmTimingInfoBytes)
             return false;
         _timerTried = true;
-        var handle = NativeMethods.CreateWaitableTimerEx(IntPtr.Zero, null, NativeMethods.CreateWaitableTimerHighResolution, NativeMethods.TimerAllAccess);
-        if (handle == IntPtr.Zero)
-        {
-            handle = NativeMethods.CreateWaitableTimerEx(IntPtr.Zero, null, 0, NativeMethods.TimerAllAccess);
-            if (handle == IntPtr.Zero)
-                return false;
-            _periodRaised = NativeMethods.TimeBeginPeriod(1) == 0;
-        }
-
-        _timer = new TimerWaitHandle(handle);
-        _waitSet = _wake is null ? null : new WaitHandle[] { _timer, _wake };
+        _timer = HighResolutionTimer.TryCreate(plainWithRaisedPeriod: true);
+        if (_timer is null)
+            return false;
+        _waitSet = _wake is null ? null : new WaitHandle[] { _timer.Handle, _wake };
         return true;
     }
 

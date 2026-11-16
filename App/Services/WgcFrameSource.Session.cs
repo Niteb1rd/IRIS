@@ -125,7 +125,9 @@ public sealed partial class WgcFrameSource
 
         _itemClosed = false;
         _arrived.Reset();
-        var pool = Wgc.Direct3D11CaptureFramePool.CreateFreeThreaded(_winrtDevice!, Wgd.DirectXPixelFormat.B8G8R8A8UIntNormalized, PoolBuffers, size);
+        _copyQueueWanted = UseCopyQueue;
+        _copyQueueOn = UseCopyQueue && !s_copyQueueBroken;
+        var pool = Wgc.Direct3D11CaptureFramePool.CreateFreeThreaded(_winrtDevice!, Wgd.DirectXPixelFormat.B8G8R8A8UIntNormalized, PoolBufferCount, size);
         _pool = pool;
         _poolSize = size;
         pool.FrameArrived += OnFrameArrived;
@@ -141,14 +143,14 @@ public sealed partial class WgcFrameSource
         return null;
     }
 
-    private FrameArrival Acquire(long tick)
+    private FrameArrival Acquire(long tick, int timeoutMs)
     {
         Wgc.Direct3D11CaptureFrame? newest = null;
         _arrived.Reset();
         Drain(ref newest);
-        if (newest is null)
+        if (newest is null && timeoutMs > 0)
         {
-            _arrived.WaitOne(LiveSettings.CaptureAcquireTimeoutMs);
+            _arrived.WaitOne(timeoutMs);
             Drain(ref newest);
         }
 
@@ -177,9 +179,16 @@ public sealed partial class WgcFrameSource
         if (content.Width != _poolSize.Width || content.Height != _poolSize.Height)
         {
             TryDispose(newest);
+            if (_copyQueue is not null)
+            {
+                Release();
+                _retryAtTick = 0;
+                return new FrameArrival(FrameWait.Unchanged);
+            }
+
             if (content.Width > 0 && content.Height > 0)
             {
-                _pool!.Recreate(_winrtDevice!, Wgd.DirectXPixelFormat.B8G8R8A8UIntNormalized, PoolBuffers, content);
+                _pool!.Recreate(_winrtDevice!, Wgd.DirectXPixelFormat.B8G8R8A8UIntNormalized, PoolBufferCount, content);
                 _poolSize = content;
             }
 

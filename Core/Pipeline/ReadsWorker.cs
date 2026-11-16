@@ -7,11 +7,11 @@ namespace Iris.Core.Pipeline;
 
 public sealed class ReadsWorker
 {
-    private sealed record PendingTick(long Tag, long Tick, int Candidates, int Budget);
+    private sealed record PendingTick(long Tick, double PostedMs, double ExpiresMs);
 
-    private sealed record KeptRead(OpenCvSharp.Mat Image, string Text, string? Name, OpenCvSharp.Rect Region, int WindowWidth, int WindowHeight);
+    private sealed record KeptRead(OpenCvSharp.Mat Image, string Text, string? Name, OpenCvSharp.Rect Region, int WindowWidth, int WindowHeight, bool OffCentre);
 
-    private readonly PipelineSettings _settings;
+    private PipelineSettings _settings;
     private readonly PlateNameJudge _judge;
     private readonly ReadPolicy _policy;
     private readonly WhiteDuplicateRule _duplicates;
@@ -24,6 +24,7 @@ public sealed class ReadsWorker
     private readonly IMonotonicClock _clock;
     private readonly Dictionary<int, PlateState> _states = new();
     private readonly Dictionary<int, List<KeptRead>> _kept = new();
+    private readonly HashSet<int> _offCentreStops = new();
     private int _unknownCropsHanded;
     private readonly HashSet<string> _confirmedLogged = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<SessionMemoryEntry> _memory = Array.Empty<SessionMemoryEntry>();
@@ -49,6 +50,13 @@ public sealed class ReadsWorker
         _policy = new ReadPolicy(settings, resolver ?? new EvidenceNameResolver(), judge, _duplicates, _names);
     }
 
+    public void UseRates(PipelineSettings settings)
+    {
+        _settings = settings;
+        _duplicates.WindowTicks = settings.DuplicateWindowTicks;
+        _policy.UseRates(settings);
+    }
+
     public IPlateImageOps Ops { get; set; }
 
     public ITraceSink? Trace { get; set; }
@@ -64,20 +72,29 @@ public sealed class ReadsWorker
         if (_pending is not { } pending)
             return false;
         foreach (var region in frame.Regions)
-            if (region.Requester == PipelineGroup.Reads && region.Tag == pending.Tag && region.OneTime)
+            if (region.Requester == PipelineGroup.Reads && region.Tag == pending.Tick && region.OneTime)
                 return true;
         return false;
     }
 
-    public void Prepare(IndexSnapshot snapshot, PipelineEnvironment env, double nowMs, SocialConfig config)
+    public bool Prepare(IndexSnapshot snapshot, PipelineEnvironment env, double nowMs, SocialConfig config)
     {
         var workStartMs = _clock.NowMs;
         SyncEpoch(snapshot);
         _judge.Config = config;
         _judge.NowMs = nowMs;
         ForgetEnded(snapshot);
-        if (_pending is not null)
+        if (_pending is { } waiting)
+        {
             _stats?.AddSkipped(PipelineGroup.Reads);
+            if (nowMs - waiting.PostedMs < _settings.ReadPendingMaxMs && !(snapshot.NewFrameMs > waiting.ExpiresMs))
+            {
+                if (Trace.Line(_clock.NowMs, "rd", "wait") is { } wait)
+                    Trace!.Write(wait.Int("tick", waiting.Tick).Num("ageMs", nowMs - waiting.PostedMs, 1).Text());
+                return false;
+            }
+        }
+
         _tick++;
         _stats?.AddPlateTick();
 
@@ -91,10 +108,19 @@ public sealed class ReadsWorker
         var scale = height / 1440.0;
         var (centreX, centreY) = RegionPlanner.ScanCentre(env.Geometry, env.Boundary, _settings);
         var list = new List<ReadCandidate>();
+        var confirmed = new List<(int Id, bool Urgent, double LastReadMs)>();
         foreach (var marker in snapshot.Markers)
         {
             if (marker.Identity is { Rsi: RsiState.Verified })
                 DropKept(marker.Id);
+            if (marker.Status == PlateStatus.Confirmed && _states.TryGetValue(marker.Id, out var held))
+            {
+                held.InContact = IsVerified(marker) && InContact(marker, snapshot.Markers);
+                if (held.InContact)
+                    held.Reserve = 0;
+                if (ConfirmedReadDue(held, marker, nowMs) is { } due)
+                    confirmed.Add((marker.Id, due, held.LastReadMs));
+            }
             if (marker.Status is not (PlateStatus.Unconfirmed or PlateStatus.Unclear))
                 continue;
             var dx = marker.X + marker.Width / 2.0 - centreX;
@@ -103,7 +129,10 @@ public sealed class ReadsWorker
             list.Add(new ReadCandidate(marker.Id, marker.Status == PlateStatus.Unclear, Math.Sqrt(dx * dx + dy * dy), last));
         }
 
-        var selected = ReadScheduler.Select(list, _settings.MaxReadsPerTick);
+        var selected = ReadScheduler.Select(list, _settings.MaxReadsPerTick).ToList();
+        var rereads = confirmed.OrderByDescending(c => c.Urgent).ThenBy(c => c.LastReadMs).ThenBy(c => c.Id)
+            .Take(Math.Max(0, _settings.MaxReadsPerTick - selected.Count)).Select(c => c.Id).ToHashSet();
+        selected.AddRange(rereads);
         var madeFrom = snapshot.NewFrameMs;
         var target = double.IsFinite(madeFrom) ? madeFrom + snapshot.NominalFrameIntervalMs : nowMs;
         var readExpiryMs = RegionPlanner.OneTimeExpiryMs(_settings.ReadRequestMs, snapshot.NominalFrameIntervalMs, _settings);
@@ -111,7 +140,7 @@ public sealed class ReadsWorker
         {
             if (snapshot.Find(id) is not { } marker)
                 continue;
-            if (_states.TryGetValue(id, out var known) && known.Status is PlateStatus.Confirmed or PlateStatus.Stopped)
+            if (_states.TryGetValue(id, out var known) && known.Status is PlateStatus.Confirmed or PlateStatus.Stopped && !rereads.Contains(id))
                 continue;
             if (RegionPlanner.Crop(marker, target, _settings.ReadMarginPx * scale, width, height, _settings) is not { } crop)
                 continue;
@@ -119,7 +148,7 @@ public sealed class ReadsWorker
             updates.Add(new RequestUpdate(PipelineGroup.Reads, stamp, epoch, id, spec));
         }
 
-        _pending = updates.Any(u => u is RequestUpdate) ? new PendingTick(_tick, _tick, list.Count, selected.Count) : null;
+        _pending = updates.Any(u => u is RequestUpdate) ? new PendingTick(_tick, nowMs, nowMs + readExpiryMs) : null;
         if (Trace.Line(_clock.NowMs, "rd", "prep") is { } prep)
         {
             prep.Int("tick", _tick).Int("candidates", list.Count).Num("madeFrom", madeFrom).Array("asked");
@@ -129,6 +158,7 @@ public sealed class ReadsWorker
             Trace!.Write(prep.EndArray().Text());
         }
         UpdateTiming.Send(_sink, updates, _clock, workStartMs, snapshot.NewFrameMs);
+        return true;
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060", Justification = "same Process signature as the other workers")]
@@ -156,7 +186,7 @@ public sealed class ReadsWorker
         var reads = 0;
         foreach (var region in frame.Regions)
         {
-            if (region.Requester != PipelineGroup.Reads || region.Kind != RequestKind.ReadCrop || region.Tag != pending.Tag || !region.OneTime || region.Image.Empty())
+            if (region.Requester != PipelineGroup.Reads || region.Kind != RequestKind.ReadCrop || region.Tag != pending.Tick || !region.OneTime || region.Image.Empty())
                 continue;
             if (snapshot.Find(region.MarkerId) is not { } marker)
                 continue;
@@ -178,11 +208,22 @@ public sealed class ReadsWorker
         var frameMs = frame.FrameMs;
         if (!_states.TryGetValue(item.Id, out var state))
             _states[item.Id] = state = new PlateState(item.Id, frameMs);
+        if (state.Status == PlateStatus.Confirmed && marker.Status == PlateStatus.Confirmed)
+        {
+            ReadConfirmed(state, item, marker, frameMs, freshnessMs, updates);
+            return;
+        }
+
         if (state.Status is PlateStatus.Confirmed or PlateStatus.Stopped)
             return;
 
         var result = Ops.Read(item);
         KeepRead(frame, item, result);
+        var background = _stats is not null || Trace is { Enabled: true }
+            ? PlateBackground.Measure(item.Crop.Image, marker.Line.X - item.Crop.Origin.X, marker.Line.Y - item.Crop.Origin.Y, marker.Line.Width, marker.Line.Height)
+            : null;
+        if (background is { } bg)
+            _stats?.AddBandRead(PlateBackground.BandOf(bg), result.Class == ObservationClass.Name);
         var nameBox = result.Rows is { Count: > 0 } rows ? rows[^1] : (PixelRect?)null;
         var observation = new ReadObservation(
             frameMs, frame.Sequence, result.Class, result.Name, result.O0 ?? Array.Empty<Detection.O0Glyph>(),
@@ -193,7 +234,7 @@ public sealed class ReadsWorker
             traced.Int("seq", frame.Sequence).Num("fms", frameMs).Int("tick", pending.Tick).Int("mid", item.Id).Str("st", marker.Status.ToString())
                 .Box("line", marker.Line).Str("class", result.Class.ToString()).Str("name", result.Name).Str("reason", result.Reason)
                 .Str("colour", result.Color?.ToString()).Int("rows", result.Rows?.Count ?? 0).Str("policy", outcome.Event.ToString()).Str("kind", outcome.Kind.ToString()).Str("decided", outcome.Name)
-                .Bool("restored", outcome.Restored).Str("stateNow", state.Status.ToString());
+                .Bool("restored", outcome.Restored).Str("stateNow", state.Status.ToString()).Num("bg", background ?? double.NaN, 0);
             if (result.Anchor is { } anchor)
                 traced.Box("anchor", anchor);
             if (nameBox is { } box)
@@ -206,7 +247,9 @@ public sealed class ReadsWorker
         if (outcome.DuplicateOf is not null && outcome.Name is { } duplicate)
             ExcludeDuplicate(duplicate, outcome.DuplicateOf.Value, frameMs, updates);
 
-        if (outcome.Event == PolicyEvent.Stopped && state.IgnoredReads < _settings.IgnoredReadsLimit)
+        if (outcome.Event == PolicyEvent.Stopped && result.Reason == ReadResult.OffCentre)
+            _offCentreStops.Add(state.Id);
+        else if (outcome.Event == PolicyEvent.Stopped && state.IgnoredReads < _settings.IgnoredReadsLimit)
             DropKept(state.Id);
 
         if (outcome.Event == PolicyEvent.Stopped)
@@ -224,8 +267,23 @@ public sealed class ReadsWorker
             else if (_confirmedLogged.Add(outcome.Name!))
                 _log.Write(_wall.UtcNow, $"Confirmed: {outcome.Name}");
 
-            Confirm(state, outcome.Name!, item, anchor, nameRows, result.NameLine, frameMs, updates);
+            var offset = Confirm(state, outcome.Name!, item, anchor, nameRows, result.NameLine, frameMs, updates);
+            state.RunName = null;
+            state.RunVotes = 0;
+            state.Reserve = 0;
             _stats?.AddConfirmed();
+            if (outcome.Restored && _settings.RestoredRemeasureMaxReads > 0)
+            {
+                state.RemeasureLeft = _settings.RestoredRemeasureMaxReads;
+                state.MeasuredNameRel = offset;
+                state.MeasuredAgreeing = 1;
+            }
+
+            if (outcome.Restored)
+            {
+                state.Disputed = true;
+                state.LastVoteMs = frameMs;
+            }
         }
         else if (state.Status is PlateStatus.Unconfirmed or PlateStatus.Unclear)
         {
@@ -239,8 +297,19 @@ public sealed class ReadsWorker
             updates.Add(new PlateColourUpdate(PipelineGroup.Reads, frameMs, _epoch, state.Id, colour));
     }
 
-    private void Confirm(
+    private PixelRect Confirm(
         PlateState state, string name, ReadItem item, PixelRect anchor, IReadOnlyList<PixelRect> rows, NameLineInfo? nameLine, double frameMs, List<IndexUpdate> updates)
+    {
+        var (line, offset, rel, refined) = MeasureOffsets(item, anchor, rows);
+        updates.Add(new PositionUpdate(PipelineGroup.Reads, frameMs, _epoch, state.Id, line));
+        updates.Add(new ConfirmUpdate(PipelineGroup.Reads, frameMs, _epoch, state.Id, name, offset, rel, nameLine));
+        if (Trace.Line(_clock.NowMs, "rd", "confirm") is { } traced)
+            Trace!.Write(traced.Num("fms", frameMs).Int("mid", state.Id).Str("name", name).Box("line", line).Box("nameRel", offset).Box("plateRel", rel)
+                .Bool("subPixel", refined).Num("nameW", nameLine?.Width ?? double.NaN).Num("nameGap", nameLine?.Gap ?? double.NaN).Text());
+        return offset;
+    }
+
+    private static (PixelRect Line, PixelRect NameRel, PixelRect PlateRel, bool Refined) MeasureOffsets(ReadItem item, PixelRect anchor, IReadOnlyList<PixelRect> rows)
     {
         var plate = Union(rows.Append(anchor));
         var nameBox = ClipToCrop(Union(rows), item.Crop);
@@ -252,12 +321,209 @@ public sealed class ReadsWorker
         var line = new PixelRect(centreX - anchor.Width / 2.0, top, anchor.Width, anchor.Height);
         var offset = new PixelRect(nameBox.X - centreX, nameBox.Y - top, nameBox.Width, nameBox.Height);
         var rel = new PixelRect(plate.X - centreX, plate.Y - top, plate.Width, plate.Height);
+        return (line, offset, rel, fix.Refined);
+    }
 
-        updates.Add(new PositionUpdate(PipelineGroup.Reads, frameMs, _epoch, state.Id, line));
-        updates.Add(new ConfirmUpdate(PipelineGroup.Reads, frameMs, _epoch, state.Id, name, offset, rel, nameLine));
-        if (Trace.Line(_clock.NowMs, "rd", "confirm") is { } traced)
-            Trace!.Write(traced.Num("fms", frameMs).Int("mid", state.Id).Str("name", name).Box("line", line).Box("nameRel", offset).Box("plateRel", rel)
-                .Bool("subPixel", fix.Refined).Num("nameW", nameLine?.Width ?? double.NaN).Num("nameGap", nameLine?.Gap ?? double.NaN).Text());
+    private static bool Remeasures(PlateState state) => state.Status == PlateStatus.Confirmed && state.RemeasureLeft > 0;
+
+    private bool? ConfirmedReadDue(PlateState state, MarkerRecord marker, double nowMs)
+    {
+        if (state.Status != PlateStatus.Confirmed)
+            return null;
+        if (Remeasures(state))
+            return true;
+        if (!IsVerified(marker))
+            return null;
+        var hz = state.Disputed ? _settings.DisputedReadHz : _settings.ConfirmedReadHz;
+        return nowMs - state.LastReadMs >= 1000.0 / hz - 500.0 / _settings.PlateHz ? state.Disputed : null;
+    }
+
+    private static bool IsVerified(MarkerRecord marker) =>
+        marker.Status == PlateStatus.Confirmed && marker.Name is { } name && marker.Identity is { Rsi: RsiState.Verified } identity
+        && string.Equals(identity.Handle, name, StringComparison.OrdinalIgnoreCase);
+
+    private void ReadConfirmed(PlateState state, ReadItem item, MarkerRecord marker, double frameMs, double freshnessMs, List<IndexUpdate> updates)
+    {
+        state.LastReadMs = frameMs;
+        var result = Ops.Read(item);
+        if (Remeasures(state))
+            Remeasure(state, item, marker, result, frameMs, updates);
+        if (IsVerified(marker))
+            Weigh(state, marker, result, frameMs, freshnessMs, updates);
+    }
+
+    private void Weigh(PlateState state, MarkerRecord marker, ReadResult result, double frameMs, double freshnessMs, List<IndexUpdate> updates)
+    {
+        _stats?.AddIdentityRead();
+        var blob = HasBlob(marker, result);
+        var strong = blob ? 0 : StrongLetters(marker, result);
+        var strongDisproof = strong >= _settings.StrongDisproofLetters;
+        var (vote, excluded) = blob || strongDisproof ? (null, false) : Vote(marker, result, frameMs, freshnessMs);
+        var support = !blob && !strongDisproof && vote is null && Supports(marker, result, frameMs, freshnessMs);
+        var opened = false;
+        var ended = false;
+        string? disproved = null;
+        var disprovedExcluded = false;
+        if (support)
+        {
+            state.RunName = null;
+            state.RunVotes = 0;
+            if (!state.InContact)
+                state.Reserve = Math.Min(_settings.BeliefReserveMax, state.Reserve + 1);
+        }
+
+        if (vote is not null)
+        {
+            if (!state.Disputed)
+            {
+                state.Disputed = opened = true;
+                _stats?.AddDispute();
+            }
+
+            state.LastVoteMs = frameMs;
+            if (state.RunName == vote && state.RunExcluded == excluded)
+                state.RunVotes++;
+            else
+            {
+                state.RunName = vote;
+                state.RunExcluded = excluded;
+                state.RunVotes = 1;
+            }
+
+            if (state.RunVotes >= _settings.DisproofVotes + state.Reserve)
+                (disproved, disprovedExcluded) = (vote, excluded);
+        }
+        else if (strongDisproof)
+            disproved = LookAlikes.FoldIdentity(result.Name!);
+        else if (state.Disputed && frameMs - state.LastVoteMs > _settings.DisputeEndMs)
+        {
+            state.Disputed = false;
+            state.RunName = null;
+            state.RunVotes = 0;
+            ended = true;
+        }
+
+        if (Trace.Line(_clock.NowMs, "rd", "belief") is { } traced)
+            Trace!.Write(traced.Num("fms", frameMs).Int("mid", state.Id).Str("confirmed", marker.Name).Str("class", result.Class.ToString()).Str("name", result.Name)
+                .Num("margin", result.MinLetterMargin, 2).Str("hitEv", marker.HitNameEvidence.ToString()).Bool("blob", blob).Str("vote", vote).Bool("excluded", excluded)
+                .Bool("support", support).Bool("opened", opened).Bool("disputed", state.Disputed).Bool("ended", ended).Int("run", state.RunVotes)
+                .Int("reserve", state.Reserve).Bool("contact", state.InContact).Int("strong", strong).Str("margins", MarginsText(result.LetterMargins))
+                .Str("disproved", disproved).Text());
+
+        if (disproved is null)
+            return;
+        if (disprovedExcluded)
+        {
+            _log.Write(_wall.UtcNow, $"Identity: {marker.Name} excluded, read as {result.Name} on its plate");
+            state.Status = PlateStatus.Stopped;
+            state.Disputed = false;
+            updates.Add(new StatusUpdate(PipelineGroup.Reads, frameMs, _epoch, state.Id, PlateStatus.Stopped));
+            _stats?.AddIdentityExcluded();
+            _stats?.AddStopped();
+            return;
+        }
+
+        _log.Write(_wall.UtcNow, strongDisproof
+            ? $"Identity: {marker.Name} disproved by one strong read ({strong} strong letters), read as {result.Name} on its plate"
+            : $"Identity: {marker.Name} disproved, read as {result.Name} on its plate");
+        _states[state.Id] = new PlateState(state.Id, state.BornMs)
+        {
+            EverNamed = true,
+            ReadsTotal = state.ReadsTotal,
+            IgnoredReads = state.IgnoredReads,
+            LastReadMs = frameMs,
+        };
+        updates.Add(new UnconfirmUpdate(PipelineGroup.Reads, frameMs, _epoch, state.Id));
+        _stats?.AddIdentityDisproved();
+    }
+
+    private int StrongLetters(MarkerRecord marker, ReadResult result)
+    {
+        if (marker.Name is null || result.Class != ObservationClass.Name || result.Name is not { Length: > 0 } read || result.LetterMargins is not { } margins
+            || LookAlikes.FoldIdentity(read) == LookAlikes.FoldIdentity(marker.Name) || _names.IsNotFound(read) || _judge.Classify(read) != NameClass.Valid)
+            return 0;
+        return IdentityEvidence.StrongDifferences(marker.Name, read, margins, _settings.StrongLetterMarginNats);
+    }
+
+    private static string? MarginsText(IReadOnlyList<double>? margins) =>
+        margins is null ? null : string.Join(" ", margins.Select(m => double.IsFinite(m) ? m.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) : "nan"));
+
+    private bool InContact(MarkerRecord marker, IReadOnlyList<MarkerRecord> markers)
+    {
+        var reach = _settings.BeliefContactLines * marker.Height;
+        var box = marker.PlateBox;
+        foreach (var other in markers)
+        {
+            if (other.Id == marker.Id)
+                continue;
+            var near = other.PlateBox;
+            if (near.X - reach < box.X + box.Width && box.X - reach < near.X + near.Width && near.Y - reach < box.Y + box.Height && box.Y - reach < near.Y + near.Height)
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool HasBlob(MarkerRecord marker, ReadResult result) =>
+        result.NameLine is { } row && Fingerprint.HasSolidRun(row.Fingerprint, row.Height, _settings.VoteBlobInkShare, _settings.VoteBlobMinWidthLines * marker.Height);
+
+    private (string? Vote, bool Excluded) Vote(MarkerRecord marker, ReadResult result, double frameMs, double freshnessMs)
+    {
+        if (!Counts(marker, result, frameMs, freshnessMs) || LookAlikes.FoldIdentity(result.Name!) == LookAlikes.FoldIdentity(marker.Name!))
+            return (null, false);
+        var read = result.Name!;
+        var folded = LookAlikes.FoldIdentity(read);
+        return _judge.Classify(read) switch
+        {
+            NameClass.Valid => (folded, false),
+            NameClass.Excluded when _judge.IsExclusionListed(read) => (folded, true),
+            _ => (null, false),
+        };
+    }
+
+    private bool Supports(MarkerRecord marker, ReadResult result, double frameMs, double freshnessMs) =>
+        Counts(marker, result, frameMs, freshnessMs) && LookAlikes.FoldIdentity(result.Name!) == LookAlikes.FoldIdentity(marker.Name!);
+
+    private bool Counts(MarkerRecord marker, ReadResult result, double frameMs, double freshnessMs) =>
+        marker.Name is not null && result.Class == ObservationClass.Name && result.Name is { Length: > 0 } && result.MinLetterMargin >= _settings.VoteMinMarginNats
+        && marker.HitNameEvidence == NameEvidence.Whole && Math.Abs(frameMs - marker.HitNameEvidenceMs) <= freshnessMs;
+
+    private void Remeasure(PlateState state, ReadItem item, MarkerRecord marker, ReadResult result, double frameMs, List<IndexUpdate> updates)
+    {
+        state.RemeasureLeft--;
+        var same = result is { Class: ObservationClass.Name, Name: { } read } && state.Name is { } name
+                   && string.Equals(LookAlikes.FoldO0(read), LookAlikes.FoldO0(name), StringComparison.OrdinalIgnoreCase);
+        var agreeing = 0;
+        if (same && result.Anchor is { } anchor && result.Rows is { Count: > 0 } rows)
+        {
+            var (_, offset, rel, _) = MeasureOffsets(item, anchor, rows);
+            var tolerance = Math.Max(_settings.StableWidthMinPx, _settings.StableWidthLines * item.LineHeight);
+            var agrees = state.MeasuredNameRel is { } last
+                         && Math.Abs(offset.Width - last.Width) <= tolerance
+                         && Math.Abs(offset.X + offset.Width / 2.0 - (last.X + last.Width / 2.0)) <= tolerance
+                         && Math.Abs(offset.Y - last.Y) <= tolerance;
+            state.MeasuredAgreeing = agrees ? state.MeasuredAgreeing + 1 : 1;
+            state.MeasuredNameRel = offset;
+            agreeing = state.MeasuredAgreeing;
+            if (agreeing >= _settings.RestoredRemeasureReads)
+            {
+                state.RemeasureLeft = 0;
+                var nameLine = result.NameLine is { } measured && marker.NameLine is { } stored
+                               && Math.Abs(measured.Width - stored.Width) > _settings.TrackWidthGateLines * marker.Height
+                    ? measured
+                    : null;
+                updates.Add(new RemeasureUpdate(PipelineGroup.Reads, frameMs, _epoch, state.Id, state.Name!, offset, rel, nameLine));
+            }
+        }
+
+        if (Trace.Line(_clock.NowMs, "rd", "remeasure") is { } traced)
+        {
+            traced.Num("fms", frameMs).Int("mid", state.Id).Str("class", result.Class.ToString()).Str("name", result.Name).Bool("same", same).Int("agreeing", agreeing)
+                .Int("left", state.RemeasureLeft).Num("nameW", result.NameLine?.Width ?? double.NaN, 0).Num("storedW", marker.NameLine?.Width ?? double.NaN, 0);
+            if (state.MeasuredNameRel is { } nameRel)
+                traced.Box("nameRel", nameRel);
+            Trace!.Write(traced.Text());
+        }
     }
 
     private void ExcludeDuplicate(string name, int otherId, double frameMs, List<IndexUpdate> updates)
@@ -270,7 +536,6 @@ public sealed class ReadsWorker
             if (!named && !(other.Id == otherId && other.Status == PlateStatus.Confirmed))
                 continue;
             other.Status = PlateStatus.Stopped;
-            other.StopReason = ReadKind.Excluded.ToString();
             updates.Add(new StatusUpdate(PipelineGroup.Reads, frameMs, _epoch, other.Id, PlateStatus.Stopped));
             _stats?.AddStopped();
         }
@@ -330,22 +595,27 @@ public sealed class ReadsWorker
     {
         if (KeepCrop is null || item.Crop.Image.Empty())
             return;
-        if (result.Name is not { Length: > 0 } && result.Reason is ReadResult.NoDistanceLine or ReadResult.OffCentre)
+        var unnamed = result.Name is not { Length: > 0 };
+        if (unnamed && result.Reason == ReadResult.NoDistanceLine)
             return;
+        var offCentre = unnamed && result.Reason == ReadResult.OffCentre;
         if (!_kept.TryGetValue(item.Id, out var list))
             _kept[item.Id] = list = new List<KeptRead>();
         if (list.Count >= _settings.ReadCropsPerPlate)
             return;
+        if (offCentre && list.Count(kept => kept.OffCentre) >= _settings.OffCentreCropsPerPlate)
+            return;
         var text = result.Name is { Length: > 0 } name ? name : string.IsNullOrEmpty(result.Reason) ? result.Class.ToString() : result.Class + "-" + result.Reason;
-        list.Add(new KeptRead(item.Crop.Image.Clone(), text, result.Name is { Length: > 0 } ? result.Name : null, item.Crop.Origin, frame.WindowWidth, frame.WindowHeight));
+        list.Add(new KeptRead(item.Crop.Image.Clone(), text, result.Name is { Length: > 0 } ? result.Name : null, item.Crop.Origin, frame.WindowWidth, frame.WindowHeight, offCentre));
     }
 
     private void FlushKept(int id)
     {
+        var offCentreStop = _offCentreStops.Remove(id);
         if (!_kept.Remove(id, out var list))
             return;
         var handOver = list.Count > 0
-                       && (!_states.TryGetValue(id, out var state) || state.Status != PlateStatus.Stopped || state.IgnoredReads >= _settings.IgnoredReadsLimit);
+                       && (!_states.TryGetValue(id, out var state) || state.Status != PlateStatus.Stopped || state.IgnoredReads >= _settings.IgnoredReadsLimit || offCentreStop);
         if (handOver && list.Exists(kept => kept.Name is { } name && IsUnknown(name, _settings.UnknownReadDistance)))
         {
             handOver = _unknownCropsHanded < _settings.ReadCropsUnknownPerRun;
@@ -399,6 +669,7 @@ public sealed class ReadsWorker
 
     private void DropKept(int id)
     {
+        _offCentreStops.Remove(id);
         if (!_kept.Remove(id, out var list))
             return;
         foreach (var kept in list)

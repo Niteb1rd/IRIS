@@ -22,7 +22,7 @@ public sealed class PipelineStats : IContrastMaskSink
 
     private readonly double[] _busyMs = new double[GroupCount];
     private readonly int[] _skipped = new int[GroupCount];
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<double> _scanMs = new();
     private readonly List<double> _miningSearchMs = new();
     private readonly List<double> _miningReadMs = new();
@@ -58,8 +58,13 @@ public sealed class PipelineStats : IContrastMaskSink
     private int _templateKeepAlives;
     private int _templateRejects;
     private int _templateGuardRejects;
+    private int _templateTooLong;
     private int _templateMoves;
     private int _restored;
+    private int _identityReads;
+    private int _disputes;
+    private int _identityDisproved;
+    private int _identityExcluded;
     private int _boundaryEnds;
     private int _confirmed;
     private int _stopped;
@@ -81,6 +86,11 @@ public sealed class PipelineStats : IContrastMaskSink
     private int _lowFingerprints;
     private int _lostRefused;
     private int _lostSearchesSkipped;
+    private const int Bands = 5;
+    private readonly int[] _bandReads = new int[Bands], _bandReadNames = new int[Bands];
+    private readonly int[] _bandTracks = new int[Bands], _bandTracksFound = new int[Bands];
+    private readonly int[] _bandChecks = new int[Bands], _bandChecksPassed = new int[Bands];
+    private int _lostTemplateSearches, _lostTemplateClipped;
     private int _contrastMasks;
     private long _contrastMaskPixels;
     private long _contrastRulePixels;
@@ -92,6 +102,7 @@ public sealed class PipelineStats : IContrastMaskSink
     private double _lastGameFrameMs;
     private int _trackedFrames;
     private int _lateFrames;
+    private int _readbackFull, _readbackFramesGivenUp, _readbackScansSkipped, _readbackScansGivenUp;
     private double _lateWorstMs;
 
     public PipelineStats(double startMs) => _windowStartMs = startMs;
@@ -292,6 +303,30 @@ public sealed class PipelineStats : IContrastMaskSink
         }
     }
 
+    public void AddReadbackFull()
+    {
+        lock (_gate)
+            _readbackFull++;
+    }
+
+    public void AddReadbackFrameGivenUp()
+    {
+        lock (_gate)
+            _readbackFramesGivenUp++;
+    }
+
+    public void AddReadbackScanSkipped()
+    {
+        lock (_gate)
+            _readbackScansSkipped++;
+    }
+
+    public void AddReadbackScanGivenUp()
+    {
+        lock (_gate)
+            _readbackScansGivenUp++;
+    }
+
     public void AddTrackedFrame()
     {
         lock (_gate)
@@ -479,10 +514,40 @@ public sealed class PipelineStats : IContrastMaskSink
             _templateGuardRejects++;
     }
 
+    public void AddTemplateTooLong()
+    {
+        lock (_gate)
+            _templateTooLong++;
+    }
+
     public void AddRestored()
     {
         lock (_gate)
             _restored++;
+    }
+
+    public void AddIdentityRead()
+    {
+        lock (_gate)
+            _identityReads++;
+    }
+
+    public void AddDispute()
+    {
+        lock (_gate)
+            _disputes++;
+    }
+
+    public void AddIdentityDisproved()
+    {
+        lock (_gate)
+            _identityDisproved++;
+    }
+
+    public void AddIdentityExcluded()
+    {
+        lock (_gate)
+            _identityExcluded++;
     }
 
     public void AddBoundaryEnd()
@@ -564,6 +629,46 @@ public sealed class PipelineStats : IContrastMaskSink
         }
     }
 
+    public void AddBandRead(BackgroundBand band, bool name)
+    {
+        lock (_gate)
+        {
+            _bandReads[(int)band]++;
+            if (name)
+                _bandReadNames[(int)band]++;
+        }
+    }
+
+    public void AddBandTrack(BackgroundBand band, bool found)
+    {
+        lock (_gate)
+        {
+            _bandTracks[(int)band]++;
+            if (found)
+                _bandTracksFound[(int)band]++;
+        }
+    }
+
+    public void AddBandCheck(BackgroundBand band, bool passed)
+    {
+        lock (_gate)
+        {
+            _bandChecks[(int)band]++;
+            if (passed)
+                _bandChecksPassed[(int)band]++;
+        }
+    }
+
+    public void AddLostTemplateSearch(bool clipped)
+    {
+        lock (_gate)
+        {
+            _lostTemplateSearches++;
+            if (clipped)
+                _lostTemplateClipped++;
+        }
+    }
+
     public void AddContrastMask(int maskPixels, int contrastPixels)
     {
         lock (_gate)
@@ -626,14 +731,17 @@ public sealed class PipelineStats : IContrastMaskSink
                 string.Create(inv, $"{_reads} plate reads in {_readTicks} of {_plateTicks} plate ticks (budget use {use:0.0} of {budget} per tick, {_saturated} ticks at the budget, average {Average(_readMs):0.0} ms, p95 {LiveStats.Percentile95(_readMs):0.0} ms, longest read tick {Max(_readMs):0.0} ms), "),
                 string.Create(inv, $"ticks skipped (worker busy): reads {_skipped[(int)PipelineGroup.Reads]}, scan {_skipped[(int)PipelineGroup.Scan]}; {_unavailable} without a picture; "),
                 string.Create(inv, $"markers tracked {markerAverage:0.0} on average, at most {_markerMax}, {markersNow} now; ended by the marker check: {_endConfirmedReads} confirmed plates by failed distance reads, {_endConfirmedNoTracking} confirmed plates by no tracking hits, {_endUnconfirmed} unconfirmed markers by checks; {_boundaryEnds} left the boundary, {_confirmed} confirmed ({confirmedNow} now), {_restored} restored, {_stopped} stopped; "),
-                string.Create(inv, $"template keep-alives {_templateKeepAlives}, template rejects (below threshold) {_templateRejects}, template guard rejects (other plate) {_templateGuardRejects}, lost plates refused (name did not match) {_lostRefused}, lost-plate searches skipped {_lostSearchesSkipped}; lost plates moved to the template's place {_templateMoves}; "),
+                string.Create(inv, $"identity: {_identityReads} reads of verified plates, {_disputes} disputes, {_identityDisproved} disproved, {_identityExcluded} excluded; "),
+                string.Create(inv, $"template keep-alives {_templateKeepAlives}, template rejects (below threshold) {_templateRejects}, template guard rejects (other plate) {_templateGuardRejects}, template keep-alives refused (plate lost too long) {_templateTooLong}, lost plates refused (name did not match) {_lostRefused}, lost-plate searches skipped {_lostSearchesSkipped}; lost plates moved to the template's place {_templateMoves}; "),
                 string.Create(inv, $"tracking: {_trackMs.Count} ticks, average {Average(_trackMs):0.000} ms, p95 {LiveStats.Percentile95(_trackMs):0.000} ms, {share:0.0} % of {_attempts} distance lines found; tracking parts (average / p95): line search {Average(_trackFindMs):0.000} / {LiveStats.Percentile95(_trackFindMs):0.000} ms, assignment {Average(_trackAssignMs):0.000} / {LiveStats.Percentile95(_trackAssignMs):0.000} ms, rest {Average(_trackRestMs):0.000} / {LiveStats.Percentile95(_trackRestMs):0.000} ms; "),
                 string.Create(inv, $"confirmed plates: distance line found {confirmedShare:0.0} % of {_confirmedAttempts} tracking attempts; "),
                 string.Create(inv, $"assignment: {_contested} contested frames, {_overrides} assignment overrides, "),
                 string.Create(inv, $"name-line failures: width {_nameFailed.Width}, gap {_nameFailed.Gap}, centre {_nameFailed.Centre}, not found {_nameFailed.NotFound}; colour mismatches {_colourMismatches}, low fingerprint {_lowFingerprints}; "),
                 string.Create(inv, $"covered plates: {_partialNames} hits on a partly covered name row, {_anchoredHits} placed from the name row, {_unverifiedHits} on the distance line alone; "),
                 string.Create(inv, $"contrast mask: {_contrastMasks} masks with bright background, share of mask pixels from the contrast rule {contrastShare:0.0} %; "),
-                string.Create(inv, $"capture: {_captureMethodText}, delay average {Average(_captureDelayMs):0.0} ms, p95 {LiveStats.Percentile95(_captureDelayMs):0.0} ms, late frames {_lateFrames}, worst {_lateWorstMs:0} ms; "),
+                BandText(),
+                string.Create(inv, $"lost-plate template searches {_lostTemplateSearches}, cut short by the check crop {_lostTemplateClipped}; "),
+                string.Create(inv, $"capture: {_captureMethodText}, delay average {Average(_captureDelayMs):0.0} ms, p95 {LiveStats.Percentile95(_captureDelayMs):0.0} ms, late frames {_lateFrames}, worst {_lateWorstMs:0} ms; region readback: {_readbackFull} pictures dropped with every copy batch busy, {_readbackFramesGivenUp} frames given up, {_readbackScansSkipped} scan regions skipped, {_readbackScansGivenUp} given up; "),
                 string.Create(inv, $"game frames ~{gameRate:0}/s, tracked ~{trackedRate:0}/s ({cap}); "),
                 string.Create(inv, $"mining: {_miningSearchMs.Count} searches (average {Average(_miningSearchMs):0.00} ms, p95 {LiveStats.Percentile95(_miningSearchMs):0.00} ms), {_miningLocks} locks, {_miningReadMs.Count} lock reads (average {Average(_miningReadMs):0.00} ms, p95 {LiveStats.Percentile95(_miningReadMs):0.00} ms); "),
                 string.Create(inv, $"loss crops: names {_lossNames} (unsure {_lossNamesUnsure}), mining {_lossMining} (unsure {_lossMiningUnsure}), {_lossOverCap} over the folder cap; "),
@@ -670,7 +778,8 @@ public sealed class PipelineStats : IContrastMaskSink
             Array.Clear(_skipped);
             Array.Clear(_busyMs);
             _endConfirmedReads = _endConfirmedNoTracking = _endUnconfirmed = _restored = 0;
-            _templateKeepAlives = _templateRejects = _templateGuardRejects = _templateMoves = 0;
+            _identityReads = _disputes = _identityDisproved = _identityExcluded = 0;
+            _templateKeepAlives = _templateRejects = _templateGuardRejects = _templateTooLong = _templateMoves = 0;
             _boundaryEnds = _confirmed = _stopped = 0;
             _markerSum = 0;
             _markerSamples = 0;
@@ -682,14 +791,36 @@ public sealed class PipelineStats : IContrastMaskSink
             _colourMismatches = _lowFingerprints = _lostRefused = 0;
             _partialNames = _anchoredHits = _unverifiedHits = 0;
             _contrastMasks = 0;
+            Array.Clear(_bandReads);
+            Array.Clear(_bandReadNames);
+            Array.Clear(_bandTracks);
+            Array.Clear(_bandTracksFound);
+            Array.Clear(_bandChecks);
+            Array.Clear(_bandChecksPassed);
+            _lostTemplateSearches = _lostTemplateClipped = 0;
             _contrastMaskPixels = _contrastRulePixels = 0;
             _gameFrames = 0;
             _trackedFrames = 0;
             _lateFrames = 0;
             _lateWorstMs = 0.0;
+            _readbackFull = _readbackFramesGivenUp = _readbackScansSkipped = _readbackScansGivenUp = 0;
             _windowStartMs = nowMs;
             return line;
         }
+    }
+
+    private string BandText()
+    {
+        var inv = CultureInfo.InvariantCulture;
+        static double Share(int part, int whole) => whole == 0 ? 0.0 : 100.0 * part / whole;
+        var parts = new List<string>(Bands);
+        for (var b = 0; b < Bands; b++)
+        {
+            parts.Add(string.Create(inv,
+                $"{PlateBackground.Label((BackgroundBand)b)}: reads {_bandReads[b]} ({Share(_bandReadNames[b], _bandReads[b]):0} % names), tracking {_bandTracks[b]} ({Share(_bandTracksFound[b], _bandTracks[b]):0.0} % found), checks {_bandChecks[b]} ({Share(_bandChecksPassed[b], _bandChecks[b]):0} % passed)"));
+        }
+
+        return "plate background: " + string.Join(", ", parts) + "; ";
     }
 
     private static string IndexText(IndexCounts? counts)
