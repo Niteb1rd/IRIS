@@ -1,0 +1,37 @@
+# IRIS social config (TOML format). Shareable: contains no personal settings.
+format = "sc-social-overlay"
+format_version = 1
+iris_version = "2.1.0"
+orgs_main_org_only = false
+org_rules_main_org_only = false
+
+[[players]]
+handle = "nitebird"
+color = "Green"
+
+[[orgs]]
+sid = "j0k3r5"
+priority = 1
+color = "Blue"
+
+[[orgs]]
+sid = "astromercs"
+priority = 1
+color = "Blue"
+
+[[org_rules]]
+kind = "activity"
+value = "Piracy"
+priority = 1
+color = "Red"
+
+[[org_rules]]
+kind = "archetype"
+value = "Syndicate"
+priority = 1
+color = "Red"
+
+[[org_rules]]
+kind = "no_match"
+priority = 10
+color = "Grey"
